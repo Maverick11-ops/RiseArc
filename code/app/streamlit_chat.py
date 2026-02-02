@@ -1,17 +1,49 @@
 # streamlit_chat.py
 import os
+import sys
 import json
 import streamlit as st
 from typing import List, Dict, Any
-from app.ai.nemotron_client import query_nemotron
-from app.finance import simulator
 
-# Config
-NEMOTRON_URL = os.getenv("NEMOTRON_URL", "http://127.0.0.1:30000/v1/chat/completions")
-WHATIF_ENDPOINT = None  # not used directly; we call simulator functions locally
+# --- Robust import handling -------------------------------------------------
+# Ensure project root is on sys.path so `app` package imports work when Streamlit runs.
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-st.set_page_config(page_title="RiseArc", layout="wide")
-st.title("RiseArc")
+# Try to import simulator and nemotron client with clear fallbacks
+_simulator = None
+_query_nemotron = None
+
+try:
+    from finance import simulator as _simulator  # type: ignore
+except Exception as e:
+    _simulator = None
+    _simulator_import_error = e
+
+try:
+    # Expect query_nemotron(prompt: str) -> Union[str, dict]
+    from ai.nemotron_client import query_nemotron as _query_nemotron  # type: ignore
+except Exception as e:
+    _query_nemotron = None
+    _nemotron_import_error = e
+
+# Provide a safe placeholder for query_nemotron if the real client isn't available
+def _placeholder_query_nemotron(prompt: str) -> str:
+    return (
+        "[Nemotron client not available] Install or start your model server and ensure "
+        "app.ai.nemotron_client.query_nemotron is importable. Prompt was: "
+        + (prompt if len(prompt) < 1000 else prompt[:1000] + "...")
+    )
+
+if _query_nemotron is None:
+    query_nemotron = _placeholder_query_nemotron
+else:
+    query_nemotron = _query_nemotron
+
+# --- Streamlit UI ----------------------------------------------------------
+st.set_page_config(page_title="RiseArc Chat", layout="wide")
+st.title("RiseArc Chat")
 
 # Session state for messages
 if "messages" not in st.session_state:
@@ -25,31 +57,35 @@ with st.sidebar:
     run_simulator_before_model = st.checkbox("Run simulator before asking Nemotron", value=True)
     include_top_scenarios = st.checkbox("Include top what-if scenarios in prompt", value=True)
     st.markdown("---")
-    st.caption("Nemotron must be running and reachable at NEMOTRON_URL.")
+    st.caption("Nemotron must be running and reachable at NEMOTRON_URL for model responses.")
 
-# Chat input area
-def render_messages():
-    for msg in st.session_state.messages[1:]:
-        if msg["role"] == "user":
-            st.markdown(f"**You**: {msg['content']}")
-        else:
-            st.markdown(f"**Nemotron**: {msg['content']}")
+# Show import errors (if any) so you can fix them quickly
+if _simulator is None:
+    st.sidebar.error("Simulator import failed. Ensure `app.finance.simulator` exists and project root is correct.")
+    if "_simulator_import_error" in globals():
+        st.sidebar.caption(str(_simulator_import_error))
 
-render_messages()
+if _query_nemotron is None:
+    st.sidebar.warning("Nemotron client not importable. Model responses will use a placeholder until fixed.")
+    if "_nemotron_import_error" in globals():
+        st.sidebar.caption(str(_nemotron_import_error))
 
-user_input = st.text_input("Message", key="input", placeholder="Ask about your finances or run a what-if scenario")
-
+# Helper functions
 def append_message(role: str, content: str):
     st.session_state.messages.append({"role": role, "content": content})
 
+def render_messages():
+    for msg in st.session_state.messages[1:]:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "user":
+            st.markdown(f"**You**: {content}")
+        elif role in ("assistant", "nemotron"):
+            st.markdown(f"**Nemotron**: {content}")
+        else:
+            st.markdown(f"**{role}**: {content}")
+
 def build_prompt_with_structured_data(user_text: str, baseline: Dict[str, Any], scenarios: List[Dict[str, Any]]):
-    """
-    Build a compact JSON-wrapped prompt that gives Nemotron:
-    - the user question
-    - the baseline metrics
-    - a few scenarios
-    Nemotron is expected to parse the JSON and generate user-facing text.
-    """
     payload = {
         "task": "generate_advice_from_structured_simulator",
         "user_question": user_text,
@@ -58,18 +94,20 @@ def build_prompt_with_structured_data(user_text: str, baseline: Dict[str, Any], 
     }
     return json.dumps(payload)
 
+# Main chat area
+render_messages()
+user_input = st.text_input("Message", key="input", placeholder="Ask about your finances or run a what-if scenario")
+
 if st.button("Send") and user_input.strip():
     append_message("user", user_input)
 
-    # Optionally run simulator first
     baseline = None
     scenarios = None
-    if run_simulator_before_model:
-        # For simplicity, try to parse numbers from the user message; otherwise use defaults
-        # This is intentionally conservative: we do not infer complex financials here.
-        # Use defaults if parsing fails.
+
+    # Run simulator locally if available
+    if run_simulator_before_model and _simulator is not None:
+        # Try to parse simple inline numbers from the user message; fallback to defaults
         try:
-            # Expect a JSON-like snippet in the message or simple "income:3000 expenses:2500 savings:10000"
             parts = {k: float(v) for k, v in 
                      [p.split(":") for p in user_input.replace(",", " ").split() if ":" in p]}
             income = parts.get("income", 3000.0)
@@ -78,26 +116,31 @@ if st.button("Send") and user_input.strip():
         except Exception:
             income, expenses, savings = 3000.0, 2500.0, 10000.0
 
-        baseline = simulator.run_simulation(income, expenses, savings)
-        scenarios_payload = simulator.generate_what_if_scenarios(income, expenses, savings)
-        scenarios = scenarios_payload.get("scenarios", [])
+        # Use the simulator functions directly
+        try:
+            baseline = _simulator.run_simulation(income, expenses, savings)
+            scenarios_payload = _simulator.generate_what_if_scenarios(income, expenses, savings)
+            scenarios = scenarios_payload.get("scenarios", [])
+        except Exception as e:
+            baseline = None
+            scenarios = None
+            append_message("assistant", f"[Simulator error] {e}")
 
     # Build prompt for Nemotron
-    if run_simulator_before_model and include_top_scenarios:
+    if run_simulator_before_model and baseline is not None and include_top_scenarios:
         prompt = build_prompt_with_structured_data(user_input, baseline, scenarios)
-    elif run_simulator_before_model:
+    elif run_simulator_before_model and baseline is not None:
         prompt = json.dumps({"task": "generate_advice_from_baseline", "user_question": user_input, "baseline": baseline})
     else:
         prompt = json.dumps({"task": "free_text_response", "user_question": user_input})
 
-    # Call Nemotron via your client
+    # Call Nemotron (or placeholder)
     try:
-        # query_nemotron should accept a string prompt; adapt if your client expects different shape
         resp = query_nemotron(prompt)
-        # If the model returns a nested structure, extract text safely
+        # Normalize response to text
         model_text = ""
         if isinstance(resp, dict):
-            # common shapes: {'choices':[{'message':{'content': '...'}}]}
+            # Common OpenAI-like shape
             choices = resp.get("choices") or []
             if choices:
                 first = choices[0]
@@ -110,7 +153,6 @@ if st.button("Send") and user_input.strip():
                 else:
                     model_text = str(first)
             else:
-                # fallback: stringify whole response
                 model_text = json.dumps(resp)
         else:
             model_text = str(resp)
@@ -118,20 +160,18 @@ if st.button("Send") and user_input.strip():
         model_text = f"[Error contacting Nemotron] {e}"
 
     append_message("assistant", model_text)
-
-    # Rerender messages
     st.experimental_rerun()
 
-# Optional panels for debugging structured outputs
+# Debug panels
 with st.expander("Structured Simulator Output"):
-    if "baseline" in locals() and baseline:
+    if baseline:
         st.subheader("Baseline")
         st.json(baseline)
-    if "scenarios" in locals() and scenarios:
+    if scenarios:
         st.subheader("Top Scenarios")
         for s in scenarios:
-            st.write(s["name"])
-            st.json(s["metrics"])
+            st.write(s.get("name", "scenario"))
+            st.json(s.get("metrics", {}))
 
 with st.expander("Conversation JSON"):
     st.json(st.session_state.messages)
