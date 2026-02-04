@@ -375,6 +375,9 @@ def sanitize_llm_output(text: str) -> str:
     cleaned = re.sub(r"</(p|div|li|h\d)>", "\n", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"<[^>]+>", "", cleaned)
     cleaned = cleaned.replace("&nbsp;", " ")
+    cleaned = re.sub(r"(\*\*|__)(.*?)\1", r"\2", cleaned)
+    cleaned = re.sub(r"(\*|_)([^*_]+)\1", r"\2", cleaned)
+    cleaned = cleaned.replace("`", "")
     cleaned = re.sub(r"[\t\r ]+", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = cleaned.strip()
@@ -1092,7 +1095,7 @@ def render_command_center() -> None:
 
         st.subheader("Nemotron Summary")
         summary_text = sanitize_llm_output(result.get("summary", ""))
-        st.write(summary_text)
+        st.text(summary_text)
 
 
 def render_chat() -> None:
@@ -1112,7 +1115,7 @@ def render_chat() -> None:
     for message in st.session_state.chat_history:
         avatar = "🤖" if message["role"] == "assistant" else "👤"
         with st.chat_message(message["role"], avatar=avatar):
-            st.write(message["content"])
+            st.text(message["content"])
 
     if not query_nemotron:
         st.warning("Nemotron is not connected. Start the model server to enable chat.")
@@ -1136,7 +1139,7 @@ def render_chat() -> None:
     if user_input:
         st.session_state.chat_history.append({"role": "user", "content": user_input})
         with st.chat_message("user", avatar="👤"):
-            st.write(user_input)
+            st.text(user_input)
 
         profile = st.session_state.profile
         metrics = (st.session_state.result or {}).get("metrics", {})
@@ -1151,7 +1154,7 @@ def render_chat() -> None:
             "Provide educational guidance, not professional financial advice.",
             "Always reply to the user in the same font.",
             "Always be helpful, polite, and professional",
-            "Always reply to the user in human language, and don't always give a 500 word reply to prompts from the user that don't require that many words in your response."
+            "Always reply to the user in human language, and don't always give a 500 word reply to prompts from the user that don't require that many words in your response.",
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
@@ -1182,7 +1185,7 @@ def render_chat() -> None:
                 response = sanitize_llm_output(extract_text(query_nemotron(prompt)))
             except Exception as exc:
                 response = f"[nemotron error] {exc}"
-            typing_placeholder.write(response)
+            typing_placeholder.text(response)
 
         st.session_state.chat_history.append({"role": "assistant", "content": response})
 
