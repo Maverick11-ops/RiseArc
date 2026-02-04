@@ -384,6 +384,10 @@ def sanitize_llm_output(text: str) -> str:
     return cleaned
 
 
+def format_currency(value: float) -> str:
+    return f"${value:,.0f}"
+
+
 def build_prompt(
     profile: Dict[str, Any],
     scenario: Dict[str, Any],
@@ -393,9 +397,14 @@ def build_prompt(
     timeline_stats: Dict[str, float],
     job_stability_value: str,
     job_stability_weight_value: float,
+    scenario_note: str = "",
 ) -> str:
     def money(value: float) -> str:
         return f"${value:,.0f}"
+
+    scenario_block = ""
+    if scenario_note.strip():
+        scenario_block = f"\nUser Scenario Request:\n- {scenario_note.strip()}\n"
 
     return f"""
 You are RiseArc, a financial assistant powered by Nemotron-3-Nano.
@@ -438,6 +447,7 @@ Computed Metrics:
 
 Alert Context:
 {alert}
+{scenario_block}
 """.strip()
 
 
@@ -515,6 +525,7 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         llm_timeline_stats,
         stability_label,
         stability_weight_value,
+        payload.get("scenario_note", ""),
     )
     try:
         summary = sanitize_llm_output(extract_text(query_nemotron(prompt)))
@@ -652,7 +663,7 @@ def render_sidebar() -> None:
         st.markdown('<div class="sidebar-brand">RiseArc</div>', unsafe_allow_html=True)
         st.caption("Financial intelligence console")
 
-        options = ["Landing", "Command Center", "Chat"]
+        options = ["Landing", "Scenario Builder", "Survival Timeline", "Chat"]
         st.markdown("Navigation")
         for option in options:
             is_active = st.session_state.active_view == option
@@ -668,45 +679,6 @@ def render_sidebar() -> None:
             apply_demo_profile()
 
         st.markdown("---")
-        st.markdown("Chat History")
-        sessions = load_chat_sessions()
-        session_labels = ["Current session"] + [
-            f"{item['name']} - {item['created_at']}" for item in sessions
-        ]
-        selected_label = st.selectbox("Conversations", session_labels, label_visibility="visible")
-        if selected_label != "Current session":
-            selected_index = session_labels.index(selected_label) - 1
-            selected_id = sessions[selected_index]["id"]
-            if st.session_state.chat_session_id != selected_id:
-                if st.session_state.chat_session_id == "current":
-                    st.session_state.draft_chat = st.session_state.chat_history
-                st.session_state.chat_session_id = selected_id
-                st.session_state.chat_history = load_chat_session(selected_id)
-                st.session_state.active_view = "Chat"
-                st.rerun()
-        else:
-            if st.session_state.chat_session_id != "current":
-                st.session_state.chat_history = st.session_state.draft_chat
-            st.session_state.chat_session_id = "current"
-
-        st.text_input("Conversation name", key="chat_save_name", placeholder="Budget review")
-        if st.button("Save conversation", use_container_width=True):
-            save_current_chat_session(st.session_state.chat_save_name, st.session_state.chat_history)
-            st.session_state.chat_save_name = ""
-            st.rerun()
-
-        if st.button("New conversation", use_container_width=True):
-            st.session_state.chat_history = []
-            st.session_state.chat_session_id = "current"
-            st.rerun()
-
-        st.markdown("---")
-        mode = "API" if st.session_state.use_api else "Local"
-        mode_class = "ready" if st.session_state.use_api else ""
-        st.markdown(
-            f'<div class="status-pill {mode_class}">Mode: {mode}</div>',
-            unsafe_allow_html=True,
-        )
         profile_ready = st.session_state.profile is not None
         profile_class = "ready" if profile_ready else ""
         profile_label = "Profile: Ready" if profile_ready else "Profile: Incomplete"
@@ -873,8 +845,8 @@ def render_landing() -> None:
             unsafe_allow_html=True,
         )
     with cta_cols[1]:
-        if st.button("Enter Command Center", type="primary"):
-            st.session_state.active_view = "Command Center"
+        if st.button("Enter Scenario Builder", type="primary"):
+            st.session_state.active_view = "Scenario Builder"
             st.rerun()
 
 
@@ -885,6 +857,7 @@ def build_payload_from_state(
     severance: float,
     subscriptions: Dict[str, float],
     news_event: Dict[str, Any],
+    scenario_note: str = "",
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "profile": profile,
@@ -899,12 +872,101 @@ def build_payload_from_state(
             if cost > 0
         ],
         "news_event": news_event,
+        "scenario_note": scenario_note.strip(),
     }
     return payload
 
 
-def render_command_center() -> None:
-    st.subheader("Command Center")
+def render_scenario_builder() -> None:
+    st.subheader("Scenario Builder")
+
+    if not st.session_state.profile:
+        st.info("Please complete your profile to unlock the full experience.")
+        if st.button("Complete profile"):
+            st.session_state.show_profile_dialog = True
+        return
+
+    st.markdown('<div class="card-text">Build a sandbox scenario and run a survival scan.</div>', unsafe_allow_html=True)
+
+    scenario_note = st.text_area(
+        "Describe the scenario you want to simulate",
+        value=st.session_state.get("scenario_note", ""),
+        placeholder="Example: I might lose my job for 5 months, can cut expenses by 20%, and have $3k severance.",
+        height=90,
+    )
+    st.session_state.scenario_note = scenario_note
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="card-title">Scenario Inputs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">Months unemployed</div>', unsafe_allow_html=True)
+    months_unemployed = st.slider(
+        "",
+        min_value=1,
+        max_value=18,
+        value=st.session_state.get("months_unemployed", 6),
+        key="months_unemployed",
+        label_visibility="collapsed",
+    )
+    st.markdown('<div class="field-label">Expense cut (%)</div>', unsafe_allow_html=True)
+    expense_cut_pct = st.slider(
+        "",
+        min_value=0,
+        max_value=50,
+        value=st.session_state.get("expense_cut", 15),
+        key="expense_cut",
+        label_visibility="collapsed",
+    )
+    st.markdown('<div class="field-label">Severance / payout</div>', unsafe_allow_html=True)
+    severance = st.number_input(
+        "",
+        min_value=0.0,
+        value=float(st.session_state.get("severance", 3000.0)),
+        step=500.0,
+        key="severance",
+        label_visibility="collapsed",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("\n")
+    if st.button("Run Analysis", type="primary"):
+        payload = build_payload_from_state(
+            profile=st.session_state.profile,
+            months_unemployed=int(months_unemployed),
+            expense_cut_pct=float(expense_cut_pct),
+            severance=severance,
+            subscriptions={},
+            news_event=None,
+            scenario_note=scenario_note,
+        )
+        with st.spinner("Running analysis..."):
+            try:
+                result = local_analysis(payload)
+                st.session_state.result = result
+                st.success("Analysis complete.")
+            except Exception as local_exc:
+                st.error(f"Local analysis failed: {local_exc}")
+
+    result = st.session_state.result
+    if result:
+        st.subheader("Scenario Results")
+        metrics = result.get("metrics", {})
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Runway (months)", f"{metrics.get('runway_months', 0):.1f}")
+        m2.metric("Risk score", f"{metrics.get('risk_score', 0):.0f}/100")
+        m3.metric("Adjusted risk", f"{metrics.get('adjusted_risk_score', 0):.0f}/100")
+        st.progress(min(int(metrics.get("risk_score", 0)), 100))
+
+        timeline = result.get("timeline", [])
+        if timeline:
+            st.line_chart(timeline, height=240)
+
+        st.subheader("Nemotron Summary")
+        summary_text = sanitize_llm_output(result.get("summary", ""))
+        st.text(summary_text)
+
+
+def render_survival_timeline() -> None:
+    st.subheader("Survival Timeline")
 
     if not st.session_state.profile:
         st.info("Please complete your profile to unlock the full experience.")
@@ -913,189 +975,99 @@ def render_command_center() -> None:
         return
 
     profile = st.session_state.profile
+    income = float(profile.get("income_monthly", 0.0))
+    expenses = float(profile.get("expenses_monthly", 0.0))
+    savings = float(profile.get("savings", 0.0))
+    debt = float(profile.get("debt", 0.0))
 
-    top = st.columns([2, 1])
-    with top[0]:
+    monthly_net = income - expenses
+    debt_ratio = compute_debt_ratio(debt, income) if compute_debt_ratio else 0.0
+    runway_months = 60.0 if monthly_net >= 0 else compute_runway(savings, abs(monthly_net), 0.0)
+    risk_score = (
+        compute_risk_score(runway_months, debt_ratio, profile.get("job_stability", "stable"), profile.get("industry", "Other"))
+        if compute_risk_score
+        else 0.0
+    )
+
+    m1, m2, m3 = st.columns(3)
+    if monthly_net >= 0:
+        m1.metric("Cash flow", "Positive")
+        m2.metric("Monthly surplus", format_currency(monthly_net))
+        m3.metric("Risk score", f"{risk_score:.0f}/100")
+        st.progress(min(int(risk_score), 100))
+    else:
+        m1.metric("Runway (months)", f"{runway_months:.1f}")
+        m2.metric("Monthly deficit", format_currency(abs(monthly_net)))
+        m3.metric("Risk score", f"{risk_score:.0f}/100")
+        st.progress(min(int(risk_score), 100))
+
+    horizon_months = 36
+    if monthly_net >= 0:
+        timeline = [round(savings + monthly_net * month, 2) for month in range(horizon_months + 1)]
+        st.line_chart(timeline, height=260)
+    else:
+        timeline = build_timeline(savings, abs(monthly_net), horizon_months, 0.0) if build_timeline else []
+        if timeline:
+            st.line_chart(timeline, height=260)
+
+    timeline_stats = get_timeline_stats(timeline)
+    metrics = {
+        "runway_months": runway_months,
+        "risk_score": risk_score,
+        "adjusted_risk_score": risk_score,
+        "debt_ratio": debt_ratio,
+    }
+    risk_drivers = build_risk_drivers(profile, metrics)
+
+    insights_cols = st.columns(2)
+    with insights_cols[0]:
+        drivers_list = "".join([f"<li>{item}</li>" for item in risk_drivers])
         st.markdown(
             f"""
             <div class="card">
-              <div class="card-title">Profile Snapshot</div>
-              <div class="card-text">Income: ${profile['income_monthly']:,.0f} | Expenses: ${profile['expenses_monthly']:,.0f}</div>
-              <div class="card-text">Savings: ${profile['savings']:,.0f} | Debt: ${profile['debt']:,.0f}</div>
-              <div class="card-text">Industry: {profile['industry']} | Stability: {JOB_STABILITY_LABELS.get(profile['job_stability'], profile['job_stability'])}</div>
+              <div class="card-title">Risk Drivers</div>
+              <ul class="card-text">{drivers_list}</ul>
             </div>
             """,
             unsafe_allow_html=True,
         )
-    with top[1]:
-        if st.button("Edit profile"):
-            st.session_state.show_profile_dialog = True
-
-    st.markdown("\n")
-
-    left, right = st.columns([1.2, 1])
-    with left:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">Scenario Controls</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-text">Stress-test your financial runway.</div>', unsafe_allow_html=True)
-        st.markdown('<div class="field-label">Months unemployed</div>', unsafe_allow_html=True)
-        months_unemployed = st.slider("", min_value=1, max_value=18, value=6, key="months_unemployed", label_visibility="collapsed")
-        st.markdown('<div class="field-label">Expense cut (%)</div>', unsafe_allow_html=True)
-        expense_cut_pct = st.slider("", min_value=0, max_value=50, value=15, key="expense_cut", label_visibility="collapsed")
-        st.markdown('<div class="field-label">Severance / payout</div>', unsafe_allow_html=True)
-        severance = st.number_input(
-            "",
-            min_value=0.0,
-            value=3000.0,
-            step=500.0,
-            key="severance",
-            label_visibility="collapsed",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with right:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">Guardian Signals</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-text">Simulated signals that influence the risk engine.</div>', unsafe_allow_html=True)
-        news_events = {
-            "None": None,
-            "Tech layoff wave": {
-                "headline": "Large tech firms announce new layoffs",
-                "risk_delta": 15,
-                "industry": "Tech",
-            },
-            "Inflation spike": {
-                "headline": "Inflation data surprises to the upside",
-                "risk_delta": 10,
-                "industry": None,
-            },
-            "Healthcare hiring boom": {
-                "headline": "Hospitals report aggressive hiring plans",
-                "risk_delta": -6,
-                "industry": "Healthcare",
-            },
-            "Retail slowdown": {
-                "headline": "Retail sales dip for two straight months",
-                "risk_delta": 8,
-                "industry": "Retail",
-            },
-        }
-        st.markdown('<div class="field-label">Simulate news event</div>', unsafe_allow_html=True)
-        event_name = st.selectbox("", list(news_events.keys()), key="news_event", label_visibility="collapsed")
-        news_event = news_events[event_name]
-        st.markdown('<div class="card-title" style="margin-top:1rem;">Savings Leak Detector</div>', unsafe_allow_html=True)
-        subscription_defaults = {
-            "Netflix": 15.49,
-            "Spotify": 10.99,
-            "Amazon Prime": 14.99,
-            "Disney+": 10.99,
-            "Hulu": 7.99,
-            "iCloud+": 2.99,
-            "Adobe": 22.99,
-            "Gym Membership": 45.00,
-        }
-        subscriptions: Dict[str, float] = {}
-        for name, cost in subscription_defaults.items():
-            checked = st.checkbox(f"{name} (${cost:.2f})", value=False, key=f"sub_{name}")
-            subscriptions[name] = cost if checked else 0.0
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("\n")
-
-    with st.expander("Connectivity", expanded=False):
-        run_cols = st.columns([1, 1])
-        with run_cols[0]:
-            st.markdown('<div class="field-label">API URL</div>', unsafe_allow_html=True)
-            api_url = st.text_input("", value=st.session_state.api_url, key="api_url", label_visibility="collapsed")
-        with run_cols[1]:
-            st.markdown('<div class="field-label">Use API</div>', unsafe_allow_html=True)
-            use_api = st.checkbox("", value=st.session_state.use_api, key="use_api", label_visibility="collapsed")
-
-    disabled = st.session_state.profile is None
-    if st.button("Run Analysis", type="primary", disabled=disabled):
-        payload = build_payload_from_state(
-            profile=profile,
-            months_unemployed=int(months_unemployed),
-            expense_cut_pct=float(expense_cut_pct),
-            severance=severance,
-            subscriptions=subscriptions,
-            news_event=news_event,
+    with insights_cols[1]:
+        st.markdown(
+            f"""
+            <div class="card">
+              <div class="card-title">Timeline Insights</div>
+              <div class="card-text">Months until zero: {timeline_stats['months_until_zero']:.0f}</div>
+              <div class="card-text">Max drawdown: ${timeline_stats['max_drawdown']:,.0f}</div>
+              <div class="card-text">Trend slope: ${timeline_stats['trend_slope']:,.0f} / month</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        with st.spinner("Running analysis..."):
-            if use_api:
-                try:
-                    result = post_analyze(api_url, payload)
-                    st.session_state.result = result
-                    st.success("Analysis complete (API).")
-                except Exception as exc:
-                    st.warning("API unreachable, falling back to local analysis.")
-                    try:
-                        result = local_analysis(payload)
-                        st.session_state.result = result
-                        st.success("Analysis complete (local).")
-                    except Exception as local_exc:
-                        st.error(f"Request failed: {exc}")
-                        st.error(f"Local analysis failed: {local_exc}")
-            else:
-                try:
-                    result = local_analysis(payload)
-                    st.session_state.result = result
-                    st.success("Analysis complete (local).")
-                except Exception as local_exc:
-                    st.error(f"Local analysis failed: {local_exc}")
+    st.subheader("Current Snapshot")
+    if monthly_net >= 0:
+        st.success("Positive cash flow: you are growing your savings each month.")
+        st.caption(f"Projected savings in 12 months: {format_currency(savings + monthly_net * 12)}")
+    else:
+        st.warning("Negative cash flow: expenses exceed income.")
+        st.caption(f"Estimated runway at current burn: {runway_months:.1f} months")
 
-    result = st.session_state.result
-    if result:
-        metrics = result.get("metrics", {})
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Runway (months)", f"{metrics.get('runway_months', 0):.1f}")
-        m2.metric("Risk score", f"{metrics.get('risk_score', 0):.0f}/100")
-        m3.metric("Adjusted risk", f"{metrics.get('adjusted_risk_score', 0):.0f}/100")
-        st.progress(min(int(metrics.get("risk_score", 0)), 100))
-
-        st.subheader("Survival Timeline")
-        timeline = result.get("timeline", [])
-        if timeline:
-            st.line_chart(timeline, height=220)
-
-        timeline_stats = get_timeline_stats(timeline)
-        risk_drivers = build_risk_drivers(profile, metrics)
-
-        insights_cols = st.columns(2)
-        with insights_cols[0]:
-            drivers_list = "".join([f"<li>{item}</li>" for item in risk_drivers])
-            st.markdown(
-                f"""
-                <div class="card">
-                  <div class="card-title">Risk Drivers</div>
-                  <ul class="card-text">{drivers_list}</ul>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with insights_cols[1]:
-            st.markdown(
-                f"""
-                <div class="card">
-                  <div class="card-title">Timeline Insights</div>
-                  <div class="card-text">Months until zero: {timeline_stats['months_until_zero']:.0f}</div>
-                  <div class="card-text">Max drawdown: ${timeline_stats['max_drawdown']:,.0f}</div>
-                  <div class="card-text">Trend slope: ${timeline_stats['trend_slope']:,.0f} / month</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        st.subheader("Alert")
-        st.info(result.get("alert", "No alerts yet."))
-
-        st.subheader("Savings Impact")
-        st.metric("Potential monthly savings", f"${result.get('savings_total', 0):,.2f}")
-
-        st.subheader("Nemotron Summary")
-        summary_text = sanitize_llm_output(result.get("summary", ""))
+    st.subheader("Nemotron Summary")
+    if query_nemotron and extract_text:
+        prompt = (
+            "You are RiseArc. Summarize the user's current financial health in plain language. "
+            "No formulas, LaTeX, or code. Provide 4-6 bullet points and 2 practical next steps.\n"
+            f"Profile: income {income}, expenses {expenses}, savings {savings}, debt {debt}, "
+            f"industry {profile.get('industry', 'Other')}, stability {profile.get('job_stability', 'stable')}.\n"
+            f"Current cash flow: {monthly_net} per month. Runway: {runway_months:.1f} months."
+        )
+        try:
+            summary_text = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+        except Exception as exc:
+            summary_text = f"[nemotron error] {exc}"
         st.text(summary_text)
+    else:
+        st.text("Nemotron is not connected. Start the model server to generate a summary.")
 
 
 def render_chat() -> None:
@@ -1135,11 +1107,14 @@ def render_chat() -> None:
                 if st.button(text, use_container_width=True):
                     quick_input = text
 
-    user_input = quick_input or st.chat_input("Ask RiseArc about your finances")
-    if user_input:
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+    prompt_text = st.chat_input("Ask RiseArc about your finances")
+    if quick_input:
+        prompt_text = quick_input
+
+    if prompt_text:
+        st.session_state.chat_history.append({"role": "user", "content": prompt_text})
         with st.chat_message("user", avatar="👤"):
-            st.text(user_input)
+            st.text(prompt_text)
 
         profile = st.session_state.profile
         metrics = (st.session_state.result or {}).get("metrics", {})
@@ -1154,7 +1129,8 @@ def render_chat() -> None:
             "Provide educational guidance, not professional financial advice.",
             "Always reply to the user in the same font.",
             "Always be helpful, polite, and professional",
-            "Always reply to the user in human language, and don't always give a 500 word reply to prompts from the user that don't require that many words in your response.",
+            "Always reply to the user in plain human language with no formulas, LaTeX, or code formatting.",
+            "Keep answers short unless the user asks for details.",
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
@@ -1205,8 +1181,10 @@ def main() -> None:
 
     if st.session_state.active_view == "Landing":
         render_landing()
-    elif st.session_state.active_view == "Command Center":
-        render_command_center()
+    elif st.session_state.active_view == "Scenario Builder":
+        render_scenario_builder()
+    elif st.session_state.active_view == "Survival Timeline":
+        render_survival_timeline()
     else:
         render_chat()
 
