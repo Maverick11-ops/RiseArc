@@ -74,9 +74,6 @@ def inject_css() -> None:
         """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@300;400;600&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400..700,0..1,-50..200&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400..700,0..1,-50..200&display=swap');
-@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
 :root {
   --bg-1: #0b0f1a;
@@ -277,68 +274,11 @@ div[data-testid="stChatMessage"] {
   margin-bottom: 8px;
 }
 
-div[data-testid="stChatMessage"] [data-testid="stIcon"] {
-  display: none !important;
-}
-
+div[data-testid="stChatMessage"] [data-testid="stIcon"],
 span.material-symbols-rounded,
 span.material-symbols-outlined,
 span.material-icons {
-  font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons', sans-serif !important;
-  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
-}
-
-div[data-baseweb="select"] span.material-symbols-rounded,
-div[data-baseweb="select"] span.material-symbols-outlined,
-div[data-baseweb="select"] span.material-icons,
-div[data-testid="stExpander"] span.material-symbols-rounded,
-div[data-testid="stExpander"] span.material-symbols-outlined,
-div[data-testid="stExpander"] span.material-icons {
   display: none !important;
-}
-
-div[data-baseweb="select"] > div {
-  position: relative;
-}
-
-div[data-baseweb="select"] > div::after {
-  content: "";
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid var(--muted);
-  transform: translateY(-35%);
-  pointer-events: none;
-}
-
-button[data-testid="stExpanderToggle"] svg {
-  display: none !important;
-}
-
-button[data-testid="stExpanderToggle"] {
-  position: relative;
-}
-
-button[data-testid="stExpanderToggle"]::after {
-  content: "";
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  width: 0;
-  height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid var(--muted);
-  transform: translateY(-40%);
-  pointer-events: none;
-}
-
-button[data-testid="stExpanderToggle"][aria-expanded="true"]::after {
-  transform: translateY(-40%) rotate(180deg);
 }
 
 .panel {
@@ -441,194 +381,6 @@ def sanitize_llm_output(text: str) -> str:
     return cleaned
 
 
-def format_currency(value: float) -> str:
-    return f"${value:,.0f}"
-
-
-def extract_scenario_from_text(user_text: str, profile: Dict[str, Any]) -> Dict[str, Any]:
-    if not user_text:
-        return {}
-    if not query_nemotron or not extract_text:
-        return {}
-
-    schema = {
-        "months_unemployed": "int (1-36)",
-        "expense_cut_pct": "float (0-70)",
-        "severance": "float",
-        "unemployment_benefit_monthly": "float",
-        "other_income_monthly": "float",
-        "debt_payment_monthly": "float",
-        "healthcare_monthly": "float",
-        "dependent_care_monthly": "float",
-        "job_search_monthly": "float",
-        "extra_monthly_expenses": "float",
-        "one_time_expense": "float",
-        "relocation_cost": "float",
-    }
-
-    prompt = f"""
-You extract scenario details from user text for a financial simulator.
-Return ONLY a JSON object. Do not include any extra text.
-If a field is unknown, omit it.
-Schema: {json.dumps(schema)}
-
-Profile context (for defaults if needed):
-income_monthly={profile.get('income_monthly', 0)}
-expenses_monthly={profile.get('expenses_monthly', 0)}
-savings={profile.get('savings', 0)}
-debt={profile.get('debt', 0)}
-
-User request: {user_text}
-""".strip()
-
-    try:
-        raw = extract_text(query_nemotron(prompt))
-    except Exception:
-        return {}
-
-    cleaned = sanitize_llm_output(raw)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {}
-
-    try:
-        payload = json.loads(cleaned[start : end + 1])
-    except Exception:
-        return {}
-
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
-def apply_scenario_update(scenario: Dict[str, Any]) -> Dict[str, float]:
-    if not scenario:
-        return {}
-
-    def clamp_value(value: float, lo: float, hi: float) -> float:
-        if clamp:
-            return clamp(value, lo, hi)
-        return max(lo, min(value, hi))
-
-    ranges = {
-        "months_unemployed": (1.0, 36.0),
-        "expense_cut_pct": (0.0, 70.0),
-        "severance": (0.0, 200000.0),
-        "unemployment_benefit_monthly": (0.0, 50000.0),
-        "other_income_monthly": (0.0, 50000.0),
-        "debt_payment_monthly": (0.0, 50000.0),
-        "healthcare_monthly": (0.0, 50000.0),
-        "dependent_care_monthly": (0.0, 50000.0),
-        "job_search_monthly": (0.0, 50000.0),
-        "extra_monthly_expenses": (0.0, 50000.0),
-        "one_time_expense": (0.0, 500000.0),
-        "relocation_cost": (0.0, 500000.0),
-    }
-
-    applied: Dict[str, float] = {}
-    for key, (lo, hi) in ranges.items():
-        if key not in scenario:
-            continue
-        try:
-            value = float(scenario[key])
-        except (TypeError, ValueError):
-            continue
-        if key == "months_unemployed":
-            value = int(round(value))
-        applied[key] = clamp_value(value, lo, hi)
-
-    state_map = {
-        "months_unemployed": "months_unemployed",
-        "expense_cut_pct": "expense_cut",
-        "severance": "severance",
-        "unemployment_benefit_monthly": "unemployment_benefit_monthly",
-        "other_income_monthly": "other_income_monthly",
-        "extra_monthly_expenses": "extra_monthly_expenses",
-        "debt_payment_monthly": "debt_payment_monthly",
-        "healthcare_monthly": "healthcare_monthly",
-        "dependent_care_monthly": "dependent_care_monthly",
-        "job_search_monthly": "job_search_monthly",
-        "one_time_expense": "one_time_expense",
-        "relocation_cost": "relocation_cost",
-    }
-    for key, state_key in state_map.items():
-        if key in applied:
-            st.session_state[state_key] = applied[key]
-
-    return applied
-
-
-def render_simulator_intake(profile: Dict[str, Any]) -> None:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title">Survival Simulator Intake</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="card-text">Tell RiseArc what you want to simulate. We will prefill the controls below.</div>',
-        unsafe_allow_html=True,
-    )
-
-    input_cols = st.columns([4, 1])
-    with input_cols[0]:
-        user_text = st.text_input(
-            "",
-            key="sim_intake_input",
-            placeholder="Example: I might be unemployed for 5 months and can cut expenses by 20%",
-            label_visibility="collapsed",
-        )
-    with input_cols[1]:
-        send_clicked = st.button("Send", use_container_width=True)
-
-    if send_clicked and user_text.strip():
-        scenario_guess = extract_scenario_from_text(user_text, profile)
-        applied = apply_scenario_update(scenario_guess)
-        if applied:
-            summary_bits = []
-            if "months_unemployed" in applied:
-                summary_bits.append(f"{int(applied['months_unemployed'])} months unemployed")
-            if "expense_cut_pct" in applied:
-                summary_bits.append(f"{applied['expense_cut_pct']:.0f}% expense cut")
-            if "severance" in applied:
-                summary_bits.append(f"severance {format_currency(applied['severance'])}")
-            if "unemployment_benefit_monthly" in applied:
-                summary_bits.append(
-                    f"benefits {format_currency(applied['unemployment_benefit_monthly'])}/mo"
-                )
-            if "other_income_monthly" in applied:
-                summary_bits.append(f"other income {format_currency(applied['other_income_monthly'])}/mo")
-            if "debt_payment_monthly" in applied:
-                summary_bits.append(f"debt payments {format_currency(applied['debt_payment_monthly'])}/mo")
-            if "healthcare_monthly" in applied:
-                summary_bits.append(f"healthcare {format_currency(applied['healthcare_monthly'])}/mo")
-            if "dependent_care_monthly" in applied:
-                summary_bits.append(
-                    f"dependent care {format_currency(applied['dependent_care_monthly'])}/mo"
-                )
-            if "job_search_monthly" in applied:
-                summary_bits.append(f"job search {format_currency(applied['job_search_monthly'])}/mo")
-            if "extra_monthly_expenses" in applied:
-                summary_bits.append(
-                    f"other monthly {format_currency(applied['extra_monthly_expenses'])}/mo"
-                )
-            if "one_time_expense" in applied:
-                summary_bits.append(f"one-time {format_currency(applied['one_time_expense'])}")
-            if "relocation_cost" in applied:
-                summary_bits.append(f"relocation {format_currency(applied['relocation_cost'])}")
-
-            summary_text = "Updated: " + ", ".join(summary_bits) + "."
-        else:
-            summary_text = (
-                "I could not extract specific numbers from that. "
-                "Try adding details like months, percentages, or dollar amounts."
-            )
-
-        st.session_state.sim_intake_status = summary_text
-        st.session_state.sim_intake_input = ""
-        st.rerun()
-
-    if st.session_state.get("sim_intake_status"):
-        st.caption(st.session_state.sim_intake_status)
-    st.markdown("</div>", unsafe_allow_html=True)
-
 def build_prompt(
     profile: Dict[str, Any],
     scenario: Dict[str, Any],
@@ -641,15 +393,6 @@ def build_prompt(
 ) -> str:
     def money(value: float) -> str:
         return f"${value:,.0f}"
-
-    monthly_addons_total = (
-        scenario.get("extra_monthly_expenses", 0.0)
-        + scenario.get("debt_payment_monthly", 0.0)
-        + scenario.get("healthcare_monthly", 0.0)
-        + scenario.get("dependent_care_monthly", 0.0)
-        + scenario.get("job_search_monthly", 0.0)
-    )
-    one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
 
     return f"""
 You are RiseArc, a financial assistant powered by Nemotron-3-Nano.
@@ -680,17 +423,6 @@ Scenario:
 - Months unemployed: {scenario['months_unemployed']}
 - Expense cut: {scenario['expense_cut_pct']:.0f}%
 - Severance: {money(scenario['severance'])}
-- Unemployment benefit (monthly): {money(scenario.get('unemployment_benefit_monthly', 0.0))}
-- Other income (monthly): {money(scenario.get('other_income_monthly', 0.0))}
-- Debt payments (monthly): {money(scenario.get('debt_payment_monthly', 0.0))}
-- Healthcare / insurance (monthly): {money(scenario.get('healthcare_monthly', 0.0))}
-- Dependent care (monthly): {money(scenario.get('dependent_care_monthly', 0.0))}
-- Job search / reskilling (monthly): {money(scenario.get('job_search_monthly', 0.0))}
-- Other monthly expenses: {money(scenario.get('extra_monthly_expenses', 0.0))}
-- Total monthly add-ons: {money(monthly_addons_total)}
-- One-time expense: {money(scenario.get('one_time_expense', 0.0))}
-- Relocation / legal (one-time): {money(scenario.get('relocation_cost', 0.0))}
-- Total one-time costs: {money(one_time_total)}
 
 Computed Metrics:
 - Runway (months): {metrics['runway_months']:.1f}
@@ -698,9 +430,6 @@ Computed Metrics:
 - Adjusted risk score (0-100): {metrics['adjusted_risk_score']:.0f}
 - Debt ratio: {metrics['debt_ratio']:.2f}
 - Monthly expenses after cut: {money(metrics['monthly_expenses_cut'])}
-- Monthly support: {money(metrics.get('monthly_support', 0.0))}
-- Net monthly burn: {money(metrics.get('monthly_net_burn', 0.0))}
-- One-time expense: {money(metrics.get('one_time_expense', 0.0))}
 - Estimated savings leaks (monthly): {money(savings_total)}
 - Timeline signals: months_until_zero={timeline_stats['months_until_zero']:.0f}, max_drawdown={money(timeline_stats['max_drawdown'])}, trend_slope={money(timeline_stats['trend_slope'])}
 
@@ -736,23 +465,7 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     scenario = payload["scenario"]
 
     monthly_expenses_cut = profile["expenses_monthly"] * (1 - scenario["expense_cut_pct"] / 100.0)
-    monthly_support = scenario.get("unemployment_benefit_monthly", 0.0) + scenario.get(
-        "other_income_monthly", 0.0
-    )
-    monthly_addons = (
-        scenario.get("extra_monthly_expenses", 0.0)
-        + scenario.get("debt_payment_monthly", 0.0)
-        + scenario.get("healthcare_monthly", 0.0)
-        + scenario.get("dependent_care_monthly", 0.0)
-        + scenario.get("job_search_monthly", 0.0)
-    )
-    monthly_net_burn = monthly_expenses_cut + monthly_addons - monthly_support
-    one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
-    starting_balance = profile["savings"] + scenario.get("severance", 0.0) - one_time_total
-    if monthly_net_burn <= 0:
-        runway_months = 60.0
-    else:
-        runway_months = compute_runway(max(starting_balance, 0.0), monthly_net_burn, 0.0)
+    runway_months = compute_runway(profile["savings"], monthly_expenses_cut, scenario["severance"])
     debt_ratio = compute_debt_ratio(profile["debt"], profile["income_monthly"])
     risk_score = compute_risk_score(
         runway_months, debt_ratio, profile["job_stability"], profile["industry"]
@@ -769,16 +482,13 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         alert = f"Headline: {news_event['headline']} | Risk adjusted by {delta:+.0f} to {adjusted_risk:.0f}."
 
     timeline = build_timeline(
-        starting_balance, max(monthly_net_burn, 0.0), scenario["months_unemployed"], 0.0
+        profile["savings"], monthly_expenses_cut, scenario["months_unemployed"], scenario["severance"]
     )
     timeline_stats = compute_timeline_stats(timeline)
     savings_total = total_savings_leaks([s["monthly_cost"] for s in payload["subscriptions"]])
 
     metrics = {
         "monthly_expenses_cut": monthly_expenses_cut,
-        "monthly_net_burn": monthly_net_burn,
-        "monthly_support": monthly_support,
-        "one_time_expense": one_time_total,
         "runway_months": runway_months,
         "debt_ratio": debt_ratio,
         "risk_score": risk_score,
@@ -867,59 +577,6 @@ def build_risk_drivers(profile: Dict[str, Any], metrics: Dict[str, float]) -> Li
     return drivers
 
 
-def build_insights(profile: Dict[str, Any], scenario: Dict[str, Any], metrics: Dict[str, float]) -> Dict[str, str]:
-    income = profile.get("income_monthly", 0.0)
-    expenses = profile.get("expenses_monthly", 0.0)
-    savings = profile.get("savings", 0.0)
-    debt = profile.get("debt", 0.0)
-    severance = scenario.get("severance", 0.0)
-    months_unemployed = max(float(scenario.get("months_unemployed", 1)), 1.0)
-    benefits = scenario.get("unemployment_benefit_monthly", 0.0)
-    other_income = scenario.get("other_income_monthly", 0.0)
-    extra_monthly = scenario.get("extra_monthly_expenses", 0.0)
-    debt_payment = scenario.get("debt_payment_monthly", 0.0)
-    healthcare = scenario.get("healthcare_monthly", 0.0)
-    dependent_care = scenario.get("dependent_care_monthly", 0.0)
-    job_search = scenario.get("job_search_monthly", 0.0)
-    relocation = scenario.get("relocation_cost", 0.0)
-    one_time = scenario.get("one_time_expense", 0.0) + relocation
-    monthly_addons = extra_monthly + debt_payment + healthcare + dependent_care + job_search
-
-    surplus = income - expenses
-    emergency_target = expenses * 6.0
-    coverage = savings / expenses if expenses > 0 else 0.0
-    gap = max(emergency_target - savings, 0.0)
-    months_to_target = gap / surplus if surplus > 0 else None
-
-    starting_balance = savings + severance - one_time
-    required_spend = starting_balance / months_unemployed if months_unemployed > 0 else 0.0
-    net_burn = metrics.get("monthly_net_burn", expenses - benefits - other_income + monthly_addons)
-
-    debt_ratio = metrics.get("debt_ratio", 0.0)
-    if debt_ratio >= 0.6:
-        debt_band = "High"
-    elif debt_ratio >= 0.35:
-        debt_band = "Medium"
-    else:
-        debt_band = "Low"
-
-    insights = {
-        "Monthly surplus": format_currency(surplus),
-        "Emergency fund target (6 mo)": format_currency(emergency_target),
-        "Emergency fund gap": format_currency(gap),
-        "Emergency coverage": f"{coverage:.1f} months",
-        "Debt load": f"{debt_band} (ratio {debt_ratio:.2f})",
-        "Safe monthly spend for scenario": format_currency(required_spend),
-        "Monthly add-ons (total)": format_currency(monthly_addons),
-        "Net monthly burn": format_currency(net_burn),
-    }
-    if months_to_target is None:
-        insights["Months to target"] = "N/A"
-    else:
-        insights["Months to target"] = f"{months_to_target:.0f} months"
-    return insights
-
-
 def apply_demo_profile() -> None:
     if not SAMPLE_REQUEST:
         return
@@ -931,15 +588,6 @@ def apply_demo_profile() -> None:
         st.session_state["months_unemployed"] = scenario.get("months_unemployed", 6)
         st.session_state["expense_cut"] = scenario.get("expense_cut_pct", 15)
         st.session_state["severance"] = scenario.get("severance", 3000.0)
-        st.session_state["unemployment_benefit_monthly"] = scenario.get("unemployment_benefit_monthly", 0.0)
-        st.session_state["other_income_monthly"] = scenario.get("other_income_monthly", 0.0)
-        st.session_state["extra_monthly_expenses"] = scenario.get("extra_monthly_expenses", 0.0)
-        st.session_state["debt_payment_monthly"] = scenario.get("debt_payment_monthly", 0.0)
-        st.session_state["healthcare_monthly"] = scenario.get("healthcare_monthly", 0.0)
-        st.session_state["dependent_care_monthly"] = scenario.get("dependent_care_monthly", 0.0)
-        st.session_state["job_search_monthly"] = scenario.get("job_search_monthly", 0.0)
-        st.session_state["one_time_expense"] = scenario.get("one_time_expense", 0.0)
-        st.session_state["relocation_cost"] = scenario.get("relocation_cost", 0.0)
     if SAMPLE_REQUEST.get("news_event"):
         st.session_state["news_event"] = "Tech layoff wave"
     for item in SAMPLE_REQUEST.get("subscriptions", []):
@@ -1076,10 +724,8 @@ def init_state() -> None:
         st.session_state.show_profile_dialog = True
     if "active_view" not in st.session_state:
         st.session_state.active_view = "Landing"
-    if "show_simulator_details" not in st.session_state:
-        st.session_state.show_simulator_details = False
     if "use_api" not in st.session_state:
-        st.session_state.use_api = False
+        st.session_state.use_api = True
     if "api_url" not in st.session_state:
         st.session_state.api_url = DEFAULT_API_URL
     if "chat_history" not in st.session_state:
@@ -1092,30 +738,6 @@ def init_state() -> None:
         st.session_state.chat_save_name = ""
     if "result" not in st.session_state:
         st.session_state.result = None
-    if "months_unemployed" not in st.session_state:
-        st.session_state.months_unemployed = 6
-    if "expense_cut" not in st.session_state:
-        st.session_state.expense_cut = 15.0
-    if "severance" not in st.session_state:
-        st.session_state.severance = 3000.0
-    if "unemployment_benefit_monthly" not in st.session_state:
-        st.session_state.unemployment_benefit_monthly = 800.0
-    if "other_income_monthly" not in st.session_state:
-        st.session_state.other_income_monthly = 0.0
-    if "extra_monthly_expenses" not in st.session_state:
-        st.session_state.extra_monthly_expenses = 150.0
-    if "debt_payment_monthly" not in st.session_state:
-        st.session_state.debt_payment_monthly = 0.0
-    if "healthcare_monthly" not in st.session_state:
-        st.session_state.healthcare_monthly = 0.0
-    if "dependent_care_monthly" not in st.session_state:
-        st.session_state.dependent_care_monthly = 0.0
-    if "job_search_monthly" not in st.session_state:
-        st.session_state.job_search_monthly = 0.0
-    if "one_time_expense" not in st.session_state:
-        st.session_state.one_time_expense = 1200.0
-    if "relocation_cost" not in st.session_state:
-        st.session_state.relocation_cost = 0.0
 
 
 @st.dialog("Welcome to RiseArc")
@@ -1258,15 +880,6 @@ def build_payload_from_state(
     months_unemployed: int,
     expense_cut_pct: float,
     severance: float,
-    unemployment_benefit_monthly: float,
-    other_income_monthly: float,
-    extra_monthly_expenses: float,
-    debt_payment_monthly: float,
-    healthcare_monthly: float,
-    dependent_care_monthly: float,
-    job_search_monthly: float,
-    one_time_expense: float,
-    relocation_cost: float,
     subscriptions: Dict[str, float],
     news_event: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -1276,15 +889,6 @@ def build_payload_from_state(
             "months_unemployed": months_unemployed,
             "expense_cut_pct": expense_cut_pct,
             "severance": severance,
-            "unemployment_benefit_monthly": unemployment_benefit_monthly,
-            "other_income_monthly": other_income_monthly,
-            "extra_monthly_expenses": extra_monthly_expenses,
-            "debt_payment_monthly": debt_payment_monthly,
-            "healthcare_monthly": healthcare_monthly,
-            "dependent_care_monthly": dependent_care_monthly,
-            "job_search_monthly": job_search_monthly,
-            "one_time_expense": one_time_expense,
-            "relocation_cost": relocation_cost,
         },
         "subscriptions": [
             {"name": name, "monthly_cost": cost}
@@ -1307,188 +911,102 @@ def render_command_center() -> None:
 
     profile = st.session_state.profile
 
-    render_simulator_intake(profile)
-    st.markdown("\n")
-
-    months_unemployed = int(st.session_state.months_unemployed)
-    expense_cut_pct = float(st.session_state.expense_cut)
-    severance = float(st.session_state.severance)
-    unemployment_benefit_monthly = float(st.session_state.unemployment_benefit_monthly)
-    other_income_monthly = float(st.session_state.other_income_monthly)
-    extra_monthly_expenses = float(st.session_state.extra_monthly_expenses)
-    debt_payment_monthly = float(st.session_state.debt_payment_monthly)
-    healthcare_monthly = float(st.session_state.healthcare_monthly)
-    dependent_care_monthly = float(st.session_state.dependent_care_monthly)
-    job_search_monthly = float(st.session_state.job_search_monthly)
-    one_time_expense = float(st.session_state.one_time_expense)
-    relocation_cost = float(st.session_state.relocation_cost)
-
-    monthly_addons_total = (
-        debt_payment_monthly
-        + healthcare_monthly
-        + dependent_care_monthly
-        + job_search_monthly
-        + extra_monthly_expenses
-    )
-    one_time_total = one_time_expense + relocation_cost
-
-    st.markdown(
-        f"""
-        <div class="card">
-          <div class="card-title">Scenario Summary</div>
-          <div class="card-text">Unemployment: {months_unemployed} months</div>
-          <div class="card-text">Expense cut: {expense_cut_pct:.0f}%</div>
-          <div class="card-text">Monthly support: {format_currency(unemployment_benefit_monthly + other_income_monthly)} / mo</div>
-          <div class="card-text">Monthly add-ons: {format_currency(monthly_addons_total)} / mo</div>
-          <div class="card-text">One-time costs: {format_currency(one_time_total)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    top = st.columns([2, 1])
+    with top[0]:
+        st.markdown(
+            f"""
+            <div class="card">
+              <div class="card-title">Profile Snapshot</div>
+              <div class="card-text">Income: ${profile['income_monthly']:,.0f} | Expenses: ${profile['expenses_monthly']:,.0f}</div>
+              <div class="card-text">Savings: ${profile['savings']:,.0f} | Debt: ${profile['debt']:,.0f}</div>
+              <div class="card-text">Industry: {profile['industry']} | Stability: {JOB_STABILITY_LABELS.get(profile['job_stability'], profile['job_stability'])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with top[1]:
+        if st.button("Edit profile"):
+            st.session_state.show_profile_dialog = True
 
     st.markdown("\n")
-    if st.button("Edit scenario details"):
-        st.session_state.show_simulator_details = not st.session_state.show_simulator_details
 
-    with st.expander("Scenario details", expanded=st.session_state.show_simulator_details):
+    left, right = st.columns([1.2, 1])
+    with left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         st.markdown('<div class="card-title">Scenario Controls</div>', unsafe_allow_html=True)
         st.markdown('<div class="card-text">Stress-test your financial runway.</div>', unsafe_allow_html=True)
         st.markdown('<div class="field-label">Months unemployed</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=1,
-            max_value=36,
-            value=months_unemployed,
-            step=1,
-            key="months_unemployed",
-            label_visibility="collapsed",
-        )
+        months_unemployed = st.slider("", min_value=1, max_value=18, value=6, key="months_unemployed", label_visibility="collapsed")
         st.markdown('<div class="field-label">Expense cut (%)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            max_value=70.0,
-            value=expense_cut_pct,
-            step=1.0,
-            key="expense_cut",
-            label_visibility="collapsed",
-        )
+        expense_cut_pct = st.slider("", min_value=0, max_value=50, value=15, key="expense_cut", label_visibility="collapsed")
         st.markdown('<div class="field-label">Severance / payout</div>', unsafe_allow_html=True)
-        st.number_input(
+        severance = st.number_input(
             "",
             min_value=0.0,
-            value=severance,
+            value=3000.0,
             step=500.0,
             key="severance",
             label_visibility="collapsed",
         )
-        st.markdown('<div class="field-label">Unemployment benefits (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=unemployment_benefit_monthly,
-            step=100.0,
-            key="unemployment_benefit_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Other income (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=other_income_monthly,
-            step=100.0,
-            key="other_income_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="card-text" style="margin-top:0.6rem;">Monthly add-ons</div>', unsafe_allow_html=True)
-        st.markdown('<div class="field-label">Minimum debt payments (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=debt_payment_monthly,
-            step=50.0,
-            key="debt_payment_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Healthcare / insurance (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=healthcare_monthly,
-            step=50.0,
-            key="healthcare_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Dependent care (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=dependent_care_monthly,
-            step=50.0,
-            key="dependent_care_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Job search / reskilling (monthly)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=job_search_monthly,
-            step=25.0,
-            key="job_search_monthly",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Other monthly expenses (misc)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=extra_monthly_expenses,
-            step=50.0,
-            key="extra_monthly_expenses",
-            label_visibility="collapsed",
-        )
-
-        st.markdown('<div class="card-text" style="margin-top:0.6rem;">One-time costs</div>', unsafe_allow_html=True)
-        st.markdown('<div class="field-label">One-time expense</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=one_time_expense,
-            step=100.0,
-            key="one_time_expense",
-            label_visibility="collapsed",
-        )
-        st.markdown('<div class="field-label">Relocation / legal (one-time)</div>', unsafe_allow_html=True)
-        st.number_input(
-            "",
-            min_value=0.0,
-            value=relocation_cost,
-            step=100.0,
-            key="relocation_cost",
-            label_visibility="collapsed",
-        )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    months_unemployed = int(st.session_state.months_unemployed)
-    expense_cut_pct = float(st.session_state.expense_cut)
-    severance = float(st.session_state.severance)
-    unemployment_benefit_monthly = float(st.session_state.unemployment_benefit_monthly)
-    other_income_monthly = float(st.session_state.other_income_monthly)
-    extra_monthly_expenses = float(st.session_state.extra_monthly_expenses)
-    debt_payment_monthly = float(st.session_state.debt_payment_monthly)
-    healthcare_monthly = float(st.session_state.healthcare_monthly)
-    dependent_care_monthly = float(st.session_state.dependent_care_monthly)
-    job_search_monthly = float(st.session_state.job_search_monthly)
-    one_time_expense = float(st.session_state.one_time_expense)
-    relocation_cost = float(st.session_state.relocation_cost)
-
-    subscriptions: Dict[str, float] = {}
-    news_event = None
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="card-title">Guardian Signals</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-text">Simulated signals that influence the risk engine.</div>', unsafe_allow_html=True)
+        news_events = {
+            "None": None,
+            "Tech layoff wave": {
+                "headline": "Large tech firms announce new layoffs",
+                "risk_delta": 15,
+                "industry": "Tech",
+            },
+            "Inflation spike": {
+                "headline": "Inflation data surprises to the upside",
+                "risk_delta": 10,
+                "industry": None,
+            },
+            "Healthcare hiring boom": {
+                "headline": "Hospitals report aggressive hiring plans",
+                "risk_delta": -6,
+                "industry": "Healthcare",
+            },
+            "Retail slowdown": {
+                "headline": "Retail sales dip for two straight months",
+                "risk_delta": 8,
+                "industry": "Retail",
+            },
+        }
+        st.markdown('<div class="field-label">Simulate news event</div>', unsafe_allow_html=True)
+        event_name = st.selectbox("", list(news_events.keys()), key="news_event", label_visibility="collapsed")
+        news_event = news_events[event_name]
+        st.markdown('<div class="card-title" style="margin-top:1rem;">Savings Leak Detector</div>', unsafe_allow_html=True)
+        subscription_defaults = {
+            "Netflix": 15.49,
+            "Spotify": 10.99,
+            "Amazon Prime": 14.99,
+            "Disney+": 10.99,
+            "Hulu": 7.99,
+            "iCloud+": 2.99,
+            "Adobe": 22.99,
+            "Gym Membership": 45.00,
+        }
+        subscriptions: Dict[str, float] = {}
+        for name, cost in subscription_defaults.items():
+            checked = st.checkbox(f"{name} (${cost:.2f})", value=False, key=f"sub_{name}")
+            subscriptions[name] = cost if checked else 0.0
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("\n")
 
-    api_url = st.session_state.api_url
-    use_api = st.session_state.use_api
+    with st.expander("Connectivity", expanded=False):
+        run_cols = st.columns([1, 1])
+        with run_cols[0]:
+            st.markdown('<div class="field-label">API URL</div>', unsafe_allow_html=True)
+            api_url = st.text_input("", value=st.session_state.api_url, key="api_url", label_visibility="collapsed")
+        with run_cols[1]:
+            st.markdown('<div class="field-label">Use API</div>', unsafe_allow_html=True)
+            use_api = st.checkbox("", value=st.session_state.use_api, key="use_api", label_visibility="collapsed")
 
     disabled = st.session_state.profile is None
     if st.button("Run Analysis", type="primary", disabled=disabled):
@@ -1497,15 +1015,6 @@ def render_command_center() -> None:
             months_unemployed=int(months_unemployed),
             expense_cut_pct=float(expense_cut_pct),
             severance=severance,
-            unemployment_benefit_monthly=unemployment_benefit_monthly,
-            other_income_monthly=other_income_monthly,
-            extra_monthly_expenses=extra_monthly_expenses,
-            debt_payment_monthly=debt_payment_monthly,
-            healthcare_monthly=healthcare_monthly,
-            dependent_care_monthly=dependent_care_monthly,
-            job_search_monthly=job_search_monthly,
-            one_time_expense=one_time_expense,
-            relocation_cost=relocation_cost,
             subscriptions=subscriptions,
             news_event=news_event,
         )
@@ -1575,37 +1084,11 @@ def render_command_center() -> None:
                 unsafe_allow_html=True,
             )
 
-        insights = build_insights(
-            profile,
-            {
-                "months_unemployed": months_unemployed,
-                "severance": severance,
-                "unemployment_benefit_monthly": unemployment_benefit_monthly,
-                "other_income_monthly": other_income_monthly,
-                "extra_monthly_expenses": extra_monthly_expenses,
-                "debt_payment_monthly": debt_payment_monthly,
-                "healthcare_monthly": healthcare_monthly,
-                "dependent_care_monthly": dependent_care_monthly,
-                "job_search_monthly": job_search_monthly,
-                "one_time_expense": one_time_expense,
-                "relocation_cost": relocation_cost,
-            },
-            metrics,
-        )
-
-        st.subheader("Actionable Insights")
-        insight_cols = st.columns(3)
-        for idx, (label, value) in enumerate(insights.items()):
-            with insight_cols[idx % 3]:
-                st.metric(label, value)
-
         st.subheader("Alert")
         st.info(result.get("alert", "No alerts yet."))
 
-        savings_total = float(result.get("savings_total", 0) or 0)
-        if savings_total > 0:
-            st.subheader("Savings Impact")
-            st.metric("Potential monthly savings", f"${savings_total:,.2f}")
+        st.subheader("Savings Impact")
+        st.metric("Potential monthly savings", f"${result.get('savings_total', 0):,.2f}")
 
         st.subheader("Nemotron Summary")
         summary_text = sanitize_llm_output(result.get("summary", ""))
@@ -1666,6 +1149,9 @@ def render_chat() -> None:
         context_lines: List[str] = [
             "You are RiseArc, a financial assistant. Be concise, practical, and grounded in the user's data.",
             "Provide educational guidance, not professional financial advice.",
+            "Always reply to the user in the same font.",
+            "Always be helpful, polite, and professional",
+            "Always reply to the user in human language, and don't always give a 500 word reply to prompts from the user that don't require that many words in your response."
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
@@ -1678,9 +1164,7 @@ def render_chat() -> None:
             context_lines.append(
                 "Latest metrics: runway "
                 f"{llm_metrics.get('runway_months', 0):.1f} months, risk {llm_metrics.get('risk_score', 0):.0f}/100, "
-                f"adjusted risk {llm_metrics.get('adjusted_risk_score', 0):.0f}/100, "
-                f"net burn {llm_metrics.get('monthly_net_burn', 0):.0f}/mo, "
-                f"support {llm_metrics.get('monthly_support', 0):.0f}/mo."
+                f"adjusted risk {llm_metrics.get('adjusted_risk_score', 0):.0f}/100."
             )
 
         history_text = "\n".join(
