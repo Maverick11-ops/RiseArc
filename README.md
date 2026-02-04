@@ -17,7 +17,7 @@ RiseArc focuses on **anticipation rather than reaction**; helping users understa
 ## Key Features (v0.1)
 
 ### Survival Scenario Simulator
-Simulates job-loss scenarios like a customizable sandbox. For example, users can simulate how long they can sustain their current lifestyle, or simulate what if situations, such as "What if I lose my job next month?, and receive insightful analysis from Nemotron.
+Simulates job-loss scenarios like a customizable sandbox. For example, users can simulate how long they can sustain their current lifestyle, or simulate what if situations, such as "What if I lose my job next month?" and receive insightful analysis from Nemotron.
 
 ### Deterministic Risk Metrics
 Core financial metrics are computed using deterministic tools:
