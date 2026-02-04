@@ -4,38 +4,29 @@ RiseArc is a next-generation financial AI app powered by NVIDIA Nemotron-3-Nano.
 ## Our Philosophy
 With the rapid rise of AI, new jobs and opportunities are emerging, but many roles are also being displaced. RiseArc exists to help people anticipate financial shocks, understand their risk in plain language, and take practical steps before problems hit.
 
-## Key Features
-All core features are powered by NVIDIA Nemotron-3-Nano and deterministic financial tools.
+## Key Features (Current MVP v0.1)
+These are the features **actually implemented today** in the current build.
 
 ### Profile Onboarding
-One-time financial intake (income, expenses, savings, debt, industry, stability) that powers every simulation, alert, and chat response.
+One-time financial intake (income, expenses, savings, debt, industry, stability, dependents). This profile powers every simulation and chat response so the system stays consistent across the app.
 
-### Scenario Engine
-Interactive "what-if" simulations with adjustable unemployment duration, expense cuts, and severance to stress-test survival runway.
+### Survival Simulator
+A job-loss scenario simulator with adjustable unemployment duration, expense cuts, and severance. It calculates how long a user can sustain their lifestyle under stress.
 
-### Survival Timeline + Signals
-Month-by-month cash runway chart with distilled signals:
-- Months until zero
-- Max drawdown
-- Trend slope
+### Scenario Analysis + Core Metrics
+Deterministic tools compute runway months, debt ratio, and a risk score. The results are surfaced in the command center for quick decision-making.
 
-### Guardian Signals (Proactive Alerts)
-Simulated news triggers that shift risk scores based on industry exposure and profile context.
+### Survival Timeline
+A month-by-month cash runway chart that visualizes how savings decline over time so the user can see risk progression clearly.
 
-### Savings Leak Detector
-Quick audit of recurring subscriptions with immediate monthly savings estimates.
+### Nemotron-Powered Summary
+Nemotron-3-Nano converts the computed metrics into a concise Summary + Actions + Warnings response so users understand results in plain language.
 
-### Risk Drivers Panel
-Explains the top factors pushing the user’s risk score up or down, in plain language.
-
-### RiseArc Assistant (Nemotron)
-Real-time financial assistant that:
-- Interprets profile + scenario context
-- Explains risk in human-readable language
-- Suggests concrete next actions and warnings
+### RiseArc Assistant (Chatbot)
+A live Nemotron chatbot that answers questions using the user’s profile and latest scenario metrics as context.
 
 ### Conversation Memory
-Save and revisit past chat sessions from the sidebar.
+Users can save and revisit previous chat sessions from the sidebar.
 
 ## How It Works
 1. **Deterministic tools** compute runway, debt ratio, risk score, and timeline signals.

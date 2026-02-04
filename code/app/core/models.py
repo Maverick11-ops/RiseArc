@@ -17,6 +17,15 @@ class Scenario(BaseModel):
     months_unemployed: int = Field(ge=1, le=36)
     expense_cut_pct: float = Field(ge=0, le=70)
     severance: float = Field(ge=0)
+    unemployment_benefit_monthly: float = Field(ge=0, default=0.0)
+    other_income_monthly: float = Field(ge=0, default=0.0)
+    extra_monthly_expenses: float = Field(ge=0, default=0.0)
+    debt_payment_monthly: float = Field(ge=0, default=0.0)
+    healthcare_monthly: float = Field(ge=0, default=0.0)
+    dependent_care_monthly: float = Field(ge=0, default=0.0)
+    job_search_monthly: float = Field(ge=0, default=0.0)
+    one_time_expense: float = Field(ge=0, default=0.0)
+    relocation_cost: float = Field(ge=0, default=0.0)
 
 
 class Subscription(BaseModel):
@@ -39,6 +48,9 @@ class AnalyzeRequest(BaseModel):
 
 class Metrics(BaseModel):
     monthly_expenses_cut: float
+    monthly_net_burn: float
+    monthly_support: float
+    one_time_expense: float
     runway_months: float
     debt_ratio: float
     risk_score: float

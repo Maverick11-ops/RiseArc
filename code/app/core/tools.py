@@ -12,6 +12,10 @@ LLM_DEPENDENTS_MAX = 10.0
 LLM_UNEMPLOYED_MONTHS_MAX = 60.0
 LLM_EXPENSE_CUT_MAX = 80.0
 LLM_SEVERANCE_MAX = 200000.0
+LLM_BENEFITS_MAX = 50000.0
+LLM_OTHER_INCOME_MAX = 50000.0
+LLM_EXTRA_EXPENSES_MAX = 50000.0
+LLM_ONE_TIME_MAX = 500000.0
 LLM_SAVINGS_LEAKS_MAX = 50000.0
 LLM_DRAWDOWN_MAX = 1000000.0
 LLM_TREND_SLOPE_MAX = 200000.0
@@ -147,6 +151,9 @@ def compute_timeline_stats(timeline: List[float]) -> Dict[str, float]:
 def clamp_llm_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
     return {
         "monthly_expenses_cut": clamp(metrics["monthly_expenses_cut"], 0.0, LLM_EXPENSES_MAX),
+        "monthly_net_burn": clamp(metrics.get("monthly_net_burn", metrics["monthly_expenses_cut"]), -LLM_EXPENSES_MAX, LLM_EXPENSES_MAX),
+        "monthly_support": clamp(metrics.get("monthly_support", 0.0), 0.0, LLM_OTHER_INCOME_MAX + LLM_BENEFITS_MAX),
+        "one_time_expense": clamp(metrics.get("one_time_expense", 0.0), 0.0, LLM_ONE_TIME_MAX),
         "runway_months": clamp(metrics["runway_months"], 0.0, LLM_RUNWAY_MAX),
         "debt_ratio": clamp(metrics["debt_ratio"], 0.0, LLM_DEBT_RATIO_MAX),
         "risk_score": clamp(metrics["risk_score"], LLM_RISK_MIN, LLM_RISK_MAX),
@@ -183,4 +190,13 @@ def clamp_llm_scenario(scenario: Dict[str, float]) -> Dict[str, float]:
         "months_unemployed": clamp(scenario["months_unemployed"], 0.0, LLM_UNEMPLOYED_MONTHS_MAX),
         "expense_cut_pct": clamp(scenario["expense_cut_pct"], 0.0, LLM_EXPENSE_CUT_MAX),
         "severance": clamp(scenario["severance"], 0.0, LLM_SEVERANCE_MAX),
+        "unemployment_benefit_monthly": clamp(scenario.get("unemployment_benefit_monthly", 0.0), 0.0, LLM_BENEFITS_MAX),
+        "other_income_monthly": clamp(scenario.get("other_income_monthly", 0.0), 0.0, LLM_OTHER_INCOME_MAX),
+        "extra_monthly_expenses": clamp(scenario.get("extra_monthly_expenses", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
+        "debt_payment_monthly": clamp(scenario.get("debt_payment_monthly", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
+        "healthcare_monthly": clamp(scenario.get("healthcare_monthly", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
+        "dependent_care_monthly": clamp(scenario.get("dependent_care_monthly", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
+        "job_search_monthly": clamp(scenario.get("job_search_monthly", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
+        "one_time_expense": clamp(scenario.get("one_time_expense", 0.0), 0.0, LLM_ONE_TIME_MAX),
+        "relocation_cost": clamp(scenario.get("relocation_cost", 0.0), 0.0, LLM_ONE_TIME_MAX),
     }

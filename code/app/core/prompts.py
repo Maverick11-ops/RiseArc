@@ -16,6 +16,14 @@ def build_summary_prompt(
     job_stability_value: str,
     job_stability_weight: float,
 ) -> str:
+    monthly_addons_total = (
+        scenario.get("extra_monthly_expenses", 0.0)
+        + scenario.get("debt_payment_monthly", 0.0)
+        + scenario.get("healthcare_monthly", 0.0)
+        + scenario.get("dependent_care_monthly", 0.0)
+        + scenario.get("job_search_monthly", 0.0)
+    )
+    one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
     return f"""
 You are RiseArc, a financial assistant powered by Nemotron-3-Nano.
 Generate a concise, practical summary based on the user's profile and scenario.
@@ -45,6 +53,17 @@ Scenario:
 - Months unemployed: {scenario['months_unemployed']:.0f}
 - Expense cut: {scenario['expense_cut_pct']:.0f}%
 - Severance: {format_currency(scenario['severance'])}
+- Unemployment benefit (monthly): {format_currency(scenario.get('unemployment_benefit_monthly', 0.0))}
+- Other income (monthly): {format_currency(scenario.get('other_income_monthly', 0.0))}
+- Debt payments (monthly): {format_currency(scenario.get('debt_payment_monthly', 0.0))}
+- Healthcare / insurance (monthly): {format_currency(scenario.get('healthcare_monthly', 0.0))}
+- Dependent care (monthly): {format_currency(scenario.get('dependent_care_monthly', 0.0))}
+- Job search / reskilling (monthly): {format_currency(scenario.get('job_search_monthly', 0.0))}
+- Other monthly expenses: {format_currency(scenario.get('extra_monthly_expenses', 0.0))}
+- Total monthly add-ons: {format_currency(monthly_addons_total)}
+- One-time expense: {format_currency(scenario.get('one_time_expense', 0.0))}
+- Relocation / legal (one-time): {format_currency(scenario.get('relocation_cost', 0.0))}
+- Total one-time costs: {format_currency(one_time_total)}
 
 Computed Metrics:
 - Runway (months): {metrics['runway_months']:.1f}
@@ -52,6 +71,9 @@ Computed Metrics:
 - Adjusted risk score (0-100): {metrics['adjusted_risk_score']:.0f}
 - Debt ratio: {metrics['debt_ratio']:.2f}
 - Monthly expenses after cut: {format_currency(metrics['monthly_expenses_cut'])}
+- Monthly support: {format_currency(metrics.get('monthly_support', 0.0))}
+- Net monthly burn: {format_currency(metrics.get('monthly_net_burn', 0.0))}
+- One-time expense: {format_currency(metrics.get('one_time_expense', 0.0))}
 - Estimated savings leaks (monthly): {format_currency(savings_total)}
 - Timeline signals: months_until_zero={timeline_stats['months_until_zero']:.0f}, max_drawdown={format_currency(timeline_stats['max_drawdown'])}, trend_slope={format_currency(timeline_stats['trend_slope'])}
 
