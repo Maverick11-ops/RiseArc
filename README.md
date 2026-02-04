@@ -1,99 +1,82 @@
-# RiseArc: The Nemotron-Powered Financial Guardian
-RiseArc is a next-generation financial AI app powered by NVIDIA Nemotron-3-Nano. It simulates personalized risk scenarios, surfaces savings opportunities, and delivers actionable plans based on a user's profile. RiseArc is **not** just a chatbot. It's a proactive, profile-aware financial intelligence layer built to protect people from financial instability.
+# RiseArc, Nemotron-Powered Financial Resilience Guardian
 
-## Our Philosophy
-With the rapid rise of AI, new jobs and opportunities are emerging, but many roles are also being displaced. RiseArc exists to help people anticipate financial shocks, understand their risk in plain language, and take practical steps before problems hit.
+RiseArc is a prototype financial risk analysis application powered by NVIDIA Nemotron-3-Nano. It simulates personal financial shock scenarios (such as job loss), computes deterministic risk metrics, and converts those results into clear, actionable guidance.
 
-## Key Features (Current MVP v0.1)
-These are the features **actually implemented today** in the current build.
+RiseArc is *not* a generic chatbot. It is a profile-aware financial analysis system designed to help users understand how fragile or resilient their situation is under stress.
 
-### Profile Onboarding
-One-time financial intake (income, expenses, savings, debt, industry, stability, dependents). This profile powers every simulation and chat response so the system stays consistent across the app.
+---
 
-### Survival Simulator
-A job-loss scenario simulator with adjustable unemployment duration, expense cuts, and severance. It calculates how long a user can sustain their lifestyle under stress.
+## Philosophy
 
-### Scenario Analysis + Core Metrics
-Deterministic tools compute runway months, debt ratio, and a risk score. The results are surfaced in the command center for quick decision-making.
+As employment risk and financial shocks becomes harder to predict, individuals need tools that help them reason about financial downside scenarios before they happen.
 
-### Survival Timeline
-A month-by-month cash runway chart that visualizes how savings decline over time so the user can see risk progression clearly.
+RiseArc focuses on **anticipation rather than reaction**; helping users understand how long they can sustain themselves, where their risk comes from, and what actions matter most.
 
-### Nemotron-Powered Summary
-Nemotron-3-Nano converts the computed metrics into a concise Summary + Actions + Warnings response so users understand results in plain language.
+---
 
-### RiseArc Assistant (Chatbot)
+## Key Features (v0.1)
+
+### Survival Scenario Simulator
+Simulates job-loss scenarios like a customizable sandbox. For example, users can simulate how long they can sustain their current lifestyle, or simulate what if situations, such as "What if I lose my job next month?, and receive insightful analysis from Nemotron.
+
+### Deterministic Risk Metrics
+Core financial metrics are computed using deterministic tools:
+- Cash runway (months)
+- Debt-to-income ratio
+- Financial risk score (0–100)
+- etc
+
+This ensures accuracy and eliminates hallucinations from the model in financial calculations.
+
+### Cash Runway Timeline
+Generates a month-by-month cash balance timeline that visualizes how savings decline over time under stress.
+
+### Nemotron-Powered Insights
+NVIDIA Nemotron-3-Nano converts computed metrics into a concise, structured response:
+- Summary
+- Recommended Actions
+- Warnings
+
+The model is used for interpretation and explanation, not math.
+
+### Nemotron Financial Assistant Chatbot
 A live Nemotron chatbot that answers questions using the user’s profile and latest scenario metrics as context.
 
-### Conversation Memory
-Users can save and revisit previous chat sessions from the sidebar.
+
+---
 
 ## How It Works
-1. **Deterministic tools** compute runway, debt ratio, risk score, and timeline signals.
-2. **Nemotron** converts those results into a concise, structured narrative.
-3. **UI** presents the analysis with a premium command center and chat experience.
 
-This approach keeps the math accurate and the explanations clear.
+1. Deterministic Python tools are called by the Nemotron-3-Nano model, which computes financial metrics and timelines.
+2. A structured prompt is built from these results.
+3. Nemotron generates a clear, human-readable interpretation.
+4. The UI presents results in a simple, functional interface.
+
+This architecture separates calculation from reasoning to ensure reliability.
+
+---
 
 ## Architecture
-- **Model:** NVIDIA Nemotron-3-Nano (local `llama-server`)
+
+- **Model:** NVIDIA Nemotron-3-Nano (deployed locally on DGX Spark)
 - **UI:** Streamlit
-- **Core Logic:** Python tools + structured prompting
-- **Optional Backend:** FastAPI `/analyze` endpoint (for API-first deployments)
+- **Core Logic:** Python (tools + orchestration pipeline)
 
-## Quickstart
-### One-click demo (local)
-```bash
-./run_demo.sh
-```
-This starts Streamlit and opens the app at `http://127.0.0.1:8501`.
-If Nemotron is running, the assistant will respond live. If not, the app still loads and you can test UI flows.
-
-### 1. Run Nemotron locally
-Example (llama-server):
-```bash
-./bin/llama-server \
-  --model ~/models/nemotron3-gguf/Nemotron-3-Nano-30B-A3B-UD-Q8_K_XL.gguf \
-  --host 0.0.0.0 \
-  --port 30000 \
-  --n-gpu-layers 99 \
-  --ctx-size 8192 \
-  --threads 8
-```
-
-### 2. Set environment variables
-```bash
-export NEMOTRON_URL="http://127.0.0.1:30000/v1/chat/completions"
-export NEMOTRON_MODEL="local-model"
-```
-
-### 3. Run the UI
-```bash
-code/risearc-env/bin/streamlit run code/app/streamlit_chat.py
-```
-
-### 4. (Optional) Run the API
-If FastAPI is installed:
-```bash
-code/risearc-env/bin/python -m uvicorn app.main:app --app-dir code --reload
-```
-
-## Configuration
-Environment variables:
-- `NEMOTRON_URL` - Nemotron chat endpoint
-- `NEMOTRON_MODEL` - Model id expected by the server
-- `NEMOTRON_TIMEOUT` - Request timeout in seconds
-- `RISEARC_API_URL` - Optional backend URL for Streamlit
-
-## Roadmap
-- Real-time news ingestion and signal classification
-- Bank/transaction integrations
-- More granular debt payoff and budget optimization
-- Portfolio risk analysis (read-only)
-- Personalized long-term savings strategies
+---
 
 ## Notes
-- This is a prototype demo focused on core intelligence and UX.
-- No real bank integrations are included in v0.1.
-- Alerts are simulated for demo purposes.
-- Not financial advice.
+
+- This project is an early-stage prototype (v0.1) built for demonstration purposes.
+- This project was developed with the assistance of AI tools to accelerate development.
+
+---
+
+## Future Roadmap
+
+- **Proactive Reasoning:** Enable the Nemotron model to proactively run multiple personalized scenarios everyday based on the user's profile, and warn users if risk probability is above a certain percentage. 
+- **Budgeting:** Allow users to track monthly income and expenses, set saving goals, and receive insight.
+- **Savings Engine:** Help users identify opportunities to save on subscriptions such as Netflix, Spotify, etc.
+- **Improved UI and UX:** Add better UI and UX designed for maximum user satisfaction. 
+- **RAG:** Add a real time financial/economic news ingestion system using RAG. 
+- **Finetune Nemotron:** Finetune the Nemotron-3-Nano model so that it is specifically used for the finance domain.
+- and much more soon
