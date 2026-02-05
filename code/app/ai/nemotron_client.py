@@ -5,7 +5,7 @@ import requests
 
 NEMOTRON_URL = os.getenv("NEMOTRON_URL", "http://127.0.0.1:30000/v1/chat/completions")
 NEMOTRON_MODEL = os.getenv("NEMOTRON_MODEL", "local-model")
-NEMOTRON_TIMEOUT = float(os.getenv("NEMOTRON_TIMEOUT", "30"))
+NEMOTRON_TIMEOUT = float(os.getenv("NEMOTRON_TIMEOUT", "90"))
 
 
 def query_nemotron(prompt: str) -> Dict[str, Any]:
