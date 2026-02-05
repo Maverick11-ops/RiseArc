@@ -79,5 +79,6 @@ This architecture separates calculation from reasoning to ensure reliability.
 - **Savings Engine:** Help users identify opportunities to save on subscriptions such as Netflix, Spotify, etc.
 - **Improved UI and UX:** Add better UI and UX designed for maximum user satisfaction. 
 - **RAG:** Add a real time financial/economic news ingestion system using RAG. 
-- **Finetune Nemotron:** Finetune the Nemotron-3-Nano model so that it is specifically used for the finance domain.
+- **Finetune Nemotron:** Finetune the Nemotron-3-Nano model so that it is specifically used for the finance domain
+- **Nemotron Super:** Incorporate Nemotron-3-Super for much stronger reasoning and agentic behavior.
 - and much more soon
