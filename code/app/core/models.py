@@ -14,7 +14,7 @@ class Profile(BaseModel):
 
 
 class Scenario(BaseModel):
-    months_unemployed: int = Field(ge=1, le=36)
+    months_unemployed: int = Field(ge=0, le=36)
     expense_cut_pct: float = Field(ge=0, le=70)
     severance: float = Field(ge=0)
     unemployment_benefit_monthly: float = Field(ge=0, default=0.0)

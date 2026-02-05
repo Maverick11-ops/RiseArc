@@ -27,6 +27,9 @@ def build_summary_prompt(
     return f"""
 You are RiseArc, a financial assistant powered by Nemotron-3-Nano.
 Generate a concise, practical summary based on the user's profile and scenario.
+Do NOT provide investment advice, stock picks, buy/sell/hold guidance, or promises of returns.
+Avoid language that sounds like a recommendation to invest. Focus on cash flow, runway, and risk reduction.
+If asked about investing, redirect to budgeting, debt, and emergency savings fundamentals.
 
 Return in this format:
 Summary:
@@ -46,7 +49,7 @@ User Profile:
 - Savings: {format_currency(profile['savings'])}
 - Total debt: {format_currency(profile['debt'])}
 - Industry: {profile['industry']}
-- Job stability: {job_stability_value} (weight {job_stability_weight:+.0f})
+- Job stability: {job_stability_value}
 - Dependents: {profile['dependents']}
 
 Scenario:

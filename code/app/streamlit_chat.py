@@ -4,11 +4,9 @@ import os
 import re
 import sys
 import unicodedata
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -16,7 +14,6 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
-CHAT_STORE_PATH = ROOT_DIR / "data" / "chat_sessions.json"
 
 try:
     from app.core.sample_payloads import SAMPLE_REQUEST
@@ -36,6 +33,7 @@ try:
         compute_risk_score,
         compute_runway,
         compute_timeline_stats,
+        adjust_risk_for_scenario,
         job_stability_label,
         job_stability_weight,
         total_savings_leaks,
@@ -53,6 +51,7 @@ except Exception:
     compute_risk_score = None
     compute_runway = None
     compute_timeline_stats = None
+    adjust_risk_for_scenario = None
     job_stability_label = None
     job_stability_weight = None
     total_savings_leaks = None
@@ -60,7 +59,6 @@ except Exception:
     query_nemotron = None
 
 
-DEFAULT_API_URL = os.getenv("RISEARC_API_URL", "http://127.0.0.1:8000/analyze")
 JOB_STABILITY_OPTIONS = {
     "Stable": "stable",
     "Medium": "medium",
@@ -74,6 +72,9 @@ def inject_css() -> None:
         """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Sora:wght@300;400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400..700,0..1,-50..200&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400..700,0..1,-50..200&display=swap');
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
 :root {
   --bg-1: #0b0f1a;
@@ -106,6 +107,10 @@ html, body, [class*="st-"] {
   min-width: 280px;
 }
 
+[data-testid="stSidebar"] header {
+  display: none !important;
+}
+
 [data-testid="stSidebar"] .sidebar-brand {
   font-family: 'Space Grotesk', sans-serif;
   font-size: 1.2rem;
@@ -113,29 +118,14 @@ html, body, [class*="st-"] {
   margin-bottom: 1rem;
 }
 
-[data-testid="stSidebar"] div[role="radiogroup"] > label {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 12px;
-  background: rgba(30, 41, 59, 0.5);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
-}
-
-[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-  background: rgba(59, 130, 246, 0.12);
-  transform: translateX(2px);
-}
-
-[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
-  background: rgba(79, 70, 229, 0.25);
-  border: 1px solid rgba(79, 70, 229, 0.5);
-}
-
 div[role="tooltip"], div[data-baseweb="tooltip"] {
+  display: none !important;
+}
+
+*[title*="keyboard_double_arrow"],
+*[title*="keyboard-double-arrow"],
+*[aria-label*="keyboard_double_arrow"],
+*[aria-label*="keyboard-double-arrow"] {
   display: none !important;
 }
 
@@ -274,10 +264,53 @@ div[data-testid="stChatMessage"] {
   margin-bottom: 8px;
 }
 
-div[data-testid="stChatMessage"] [data-testid="stIcon"],
+div[data-testid="stChatMessage"] [data-testid="stIcon"] {
+  display: none !important;
+}
+
 span.material-symbols-rounded,
 span.material-symbols-outlined,
 span.material-icons {
+  font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons', sans-serif !important;
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+
+button[data-testid="stSidebarCollapseButton"] span {
+  display: none !important;
+}
+
+button[data-testid="stSidebarCollapseButton"]::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  display: inline-block;
+}
+
+button[data-testid="stSidebarCollapseButton"] svg,
+button[data-testid="stSidebarCollapseButton"] i {
+  display: none !important;
+}
+
+button[data-testid="stSidebarCollapseButton"] {
+  font-size: 0 !important;
+}
+
+button[data-testid="stSidebarCollapseButton"] * {
+  display: none !important;
+}
+
+button[data-testid="stSidebarCollapseButton"] {
+  color: transparent !important;
+}
+
+button[data-testid="stSidebarCollapseButton"] {
+  display: none !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] {
   display: none !important;
 }
 
@@ -320,6 +353,29 @@ div[data-baseweb="input"] {
   animation: bounce 1s infinite;
 }
 
+.summary-block {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.16), rgba(79, 70, 229, 0.12));
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 16px;
+  padding: 18px 20px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.35);
+}
+
+.summary-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.1rem;
+  margin-bottom: 0.4rem;
+}
+
+.summary-text {
+  color: var(--text);
+  font-family: 'Sora', sans-serif;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
 .typing .dots span:nth-child(2) { animation-delay: 0.2s; }
 .typing .dots span:nth-child(3) { animation-delay: 0.4s; }
 
@@ -347,7 +403,39 @@ def inject_tooltip_killer() -> None:
         """
         <script>
         const removeTitles = () => {
-          document.querySelectorAll('[title]').forEach((el) => el.removeAttribute('title'));
+          const matchesLabel = (value) =>
+            value &&
+            (value.includes('keyboard_double_arrow') ||
+             value.includes('keyboard-double-arrow') ||
+             value.includes('keyboard double arrow'));
+
+          const scrubRoot = (root) => {
+            if (!root || !root.querySelectorAll) return;
+            root.querySelectorAll('[title]').forEach((el) => el.removeAttribute('title'));
+            root.querySelectorAll('*').forEach((el) => {
+              const aria = el.getAttribute && el.getAttribute('aria-label');
+              const title = el.getAttribute && el.getAttribute('title');
+              if (matchesLabel(aria) || matchesLabel(title)) {
+                el.removeAttribute('aria-label');
+                el.removeAttribute('title');
+                el.textContent = '';
+                el.style.display = 'none';
+              }
+              if (el.shadowRoot) {
+                scrubRoot(el.shadowRoot);
+              }
+            });
+          };
+
+          scrubRoot(document);
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) {
+            const text = node.nodeValue || '';
+            if (matchesLabel(text)) {
+              node.nodeValue = '';
+            }
+          }
         };
         removeTitles();
         const observer = new MutationObserver(removeTitles);
@@ -358,18 +446,28 @@ def inject_tooltip_killer() -> None:
     )
 
 
-def post_analyze(api_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    resp = requests.post(api_url, json=payload, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
-
-
 def sanitize_llm_output(text: str) -> str:
     if not text:
         return ""
     cleaned = html.unescape(text)
     cleaned = unicodedata.normalize("NFKC", cleaned)
+    cleaned = unicodedata.normalize("NFKD", cleaned)
+    cleaned = "".join(ch for ch in cleaned if not unicodedata.combining(ch))
     cleaned = cleaned.replace("\u00ad", "")  # soft hyphen
+    for hyphen_char in [
+        "\u2010",
+        "\u2011",
+        "\u2012",
+        "\u2013",
+        "\u2014",
+        "\u2015",
+        "\u2212",
+        "\u2043",
+        "\u2212",
+        "\u058A",
+        "\u00B7",
+    ]:
+        cleaned = cleaned.replace(hyphen_char, "-")
     cleaned = re.sub(r"[\u200B-\u200D\uFEFF]", "", cleaned)
     cleaned = re.sub(r"<br\s*/?>", "\n", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"</(p|div|li|h\d)>", "\n", cleaned, flags=re.IGNORECASE)
@@ -377,7 +475,40 @@ def sanitize_llm_output(text: str) -> str:
     cleaned = cleaned.replace("&nbsp;", " ")
     cleaned = re.sub(r"(\*\*|__)(.*?)\1", r"\2", cleaned)
     cleaned = re.sub(r"(\*|_)([^*_]+)\1", r"\2", cleaned)
+    cleaned = re.sub(r"\\[a-zA-Z]+\\{([^}]*)\\}", r"\\1", cleaned)
+    cleaned = cleaned.replace("\\", "")
     cleaned = cleaned.replace("`", "")
+    cleaned = cleaned.replace("•", "- ")
+    cleaned = cleaned.replace("‣", "- ")
+    cleaned = cleaned.replace("·", "- ")
+    cleaned = cleaned.replace("–", "-")
+    cleaned = cleaned.replace("—", "-")
+    cleaned = cleaned.replace("“", '"').replace("”", '"').replace("’", "'")
+    compound_map = {
+        "shortterm": "short-term",
+        "longterm": "long-term",
+        "midterm": "mid-term",
+        "nearterm": "near-term",
+        "yearoveryear": "year-over-year",
+        "monthovermonth": "month-over-month",
+        "weekoverweek": "week-over-week",
+        "quarteroverquarter": "quarter-over-quarter",
+        "cashflow": "cash flow",
+        "runrate": "run rate",
+        "burnrate": "burn rate",
+        "breakeven": "break-even",
+        "paybackperiod": "payback period",
+        "emergencyfund": "emergency fund",
+        "highestrate": "highest-rate",
+        "debtpayoff": "debt payoff",
+    }
+    for raw, replacement in compound_map.items():
+        cleaned = re.sub(rf"\\b{raw}\\b", replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(\\$\\d[\\d,]*)(?=\\$)", r"\\1 - ", cleaned)
+    cleaned = re.sub(r"(\\$\\d[\\d,]*)(\\d{1,3}(?:,\\d{3})+)", r"\\1 - \\2", cleaned)
+    cleaned = re.sub(r"\\b(\\d{1,2})-(\\d{1,2})\\s+months\\b", r"\\1 to \\2 months", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\\bemergency fund (of|for) 36 months\\b", r"emergency fund \\1 3 to 6 months", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"[\t\r ]+", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = cleaned.strip()
@@ -386,6 +517,216 @@ def sanitize_llm_output(text: str) -> str:
 
 def format_currency(value: float) -> str:
     return f"${value:,.0f}"
+
+
+def format_readable_text(text: str) -> str:
+    if not text:
+        return ""
+    if "\n" in text:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    if len(sentences) <= 2:
+        return text
+    return "\n".join(sentences)
+
+
+def safe_json_from_text(text: str) -> Dict[str, Any]:
+    if not text:
+        return {}
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+    snippet = text[start : end + 1]
+    try:
+        payload = json.loads(snippet)
+    except Exception:
+        try:
+            payload = json.loads(sanitize_llm_output(snippet))
+        except Exception:
+            return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def regex_extract_scenario(text: str) -> Dict[str, Any]:
+    if not text:
+        return {}
+    lowered = text.lower()
+    data: Dict[str, Any] = {}
+
+    months_match = re.search(r"(\\d+(?:\\.\\d+)?)\\s*(months|month|mos|mo)", lowered)
+    if months_match:
+        data["months_unemployed"] = int(float(months_match.group(1)))
+
+    percent_match = re.search(r"(\\d+(?:\\.\\d+)?)\\s*%.*(expense|cut|reduce|lower)", lowered)
+    if percent_match:
+        data["expense_cut_pct"] = float(percent_match.group(1))
+
+    severance_match = re.search(r"(severance|payout)[^\\d]*\\$?([\\d,]+)", lowered)
+    if severance_match:
+        data["severance"] = float(severance_match.group(2).replace(",", ""))
+
+    benefit_match = re.search(r"(benefit|unemployment)[^\\d]*\\$?([\\d,]+)", lowered)
+    if benefit_match:
+        data["unemployment_benefit_monthly"] = float(benefit_match.group(2).replace(",", ""))
+
+    other_income_match = re.search(r"(side income|freelance|other income)[^\\d]*\\$?([\\d,]+)", lowered)
+    if other_income_match:
+        data["other_income_monthly"] = float(other_income_match.group(2).replace(",", ""))
+
+    return data
+
+
+def extract_scenario_from_text(user_text: str) -> Dict[str, Any]:
+    if not user_text or not user_text.strip():
+        return {}
+    if not query_nemotron or not extract_text:
+        return regex_extract_scenario(user_text)
+
+    schema = {
+        "months_unemployed": "int (1-36)",
+        "expense_cut_pct": "float (0-70)",
+        "severance": "float",
+        "unemployment_benefit_monthly": "float",
+        "other_income_monthly": "float",
+        "extra_monthly_expenses": "float",
+        "debt_payment_monthly": "float",
+        "healthcare_monthly": "float",
+        "dependent_care_monthly": "float",
+        "job_search_monthly": "float",
+        "one_time_expense": "float",
+        "relocation_cost": "float",
+    }
+
+    prompt = f"""
+You extract scenario details from user text for a financial simulator.
+Return ONLY a JSON object. Do not include any extra text.
+If a field is unknown, omit it.
+Schema: {json.dumps(schema)}
+
+User request: {user_text}
+""".strip()
+
+    try:
+        raw = extract_text(query_nemotron(prompt))
+    except Exception:
+        return regex_extract_scenario(user_text)
+
+    parsed = safe_json_from_text(raw)
+    if not parsed:
+        return regex_extract_scenario(user_text)
+    return parsed
+
+
+def apply_scenario_update(parsed: Dict[str, Any]) -> Dict[str, float]:
+    if not parsed:
+        return {}
+
+    def clamp_value(value: float, lo: float, hi: float) -> float:
+        if clamp:
+            return clamp(value, lo, hi)
+        return max(lo, min(value, hi))
+
+    ranges = {
+        "months_unemployed": (0.0, 36.0),
+        "expense_cut_pct": (0.0, 70.0),
+        "severance": (0.0, 200000.0),
+        "unemployment_benefit_monthly": (0.0, 50000.0),
+        "other_income_monthly": (0.0, 50000.0),
+        "extra_monthly_expenses": (0.0, 50000.0),
+        "debt_payment_monthly": (0.0, 50000.0),
+        "healthcare_monthly": (0.0, 50000.0),
+        "dependent_care_monthly": (0.0, 50000.0),
+        "job_search_monthly": (0.0, 50000.0),
+        "one_time_expense": (0.0, 500000.0),
+        "relocation_cost": (0.0, 500000.0),
+    }
+
+    applied: Dict[str, float] = {}
+    for key, (lo, hi) in ranges.items():
+        if key not in parsed:
+            continue
+        try:
+            value = float(parsed[key])
+        except (TypeError, ValueError):
+            continue
+        if key == "months_unemployed":
+            value = int(round(value))
+        applied[key] = clamp_value(value, lo, hi)
+
+    state_map = {
+        "months_unemployed": "months_unemployed",
+        "expense_cut_pct": "expense_cut",
+        "severance": "severance",
+        "unemployment_benefit_monthly": "unemployment_benefit_monthly",
+        "other_income_monthly": "other_income_monthly",
+        "extra_monthly_expenses": "extra_monthly_expenses",
+        "debt_payment_monthly": "debt_payment_monthly",
+        "healthcare_monthly": "healthcare_monthly",
+        "dependent_care_monthly": "dependent_care_monthly",
+        "job_search_monthly": "job_search_monthly",
+        "one_time_expense": "one_time_expense",
+        "relocation_cost": "relocation_cost",
+    }
+    for key, state_key in state_map.items():
+        if key in applied:
+            st.session_state[state_key] = applied[key]
+
+    return applied
+
+
+def profile_signature(profile: Dict[str, Any]) -> str:
+    try:
+        return json.dumps(profile, sort_keys=True)
+    except Exception:
+        return str(profile)
+
+
+def generate_baseline_summary(
+    profile: Dict[str, Any],
+    monthly_net: float,
+    runway_months: float,
+) -> str:
+    if not query_nemotron or not extract_text:
+        return "Nemotron is not connected. Start the model server to generate a summary."
+
+    prompt = (
+        "You are RiseArc. Summarize the user's current financial health in plain language. "
+        "No formulas, LaTeX, or code. Provide 4-6 bullet points and 2 practical next steps. "
+        "Do not provide investment advice, stock picks, or buy/sell guidance. "
+        "Use words like '3 to 6' for ranges (avoid dashes).\n"
+        f"Profile: income {profile.get('income_monthly', 0)}, expenses {profile.get('expenses_monthly', 0)}, "
+        f"savings {profile.get('savings', 0)}, debt {profile.get('debt', 0)}, "
+        f"industry {profile.get('industry', 'Other')}, stability {profile.get('job_stability', 'stable')}.\n"
+        f"Current cash flow: {monthly_net} per month. Runway: {runway_months:.1f} months."
+    )
+    try:
+        return sanitize_llm_output(extract_text(query_nemotron(prompt)))
+    except Exception as exc:
+        return f"[nemotron error] {exc}"
+
+
+def ensure_baseline_summary(
+    profile: Dict[str, Any],
+    monthly_net: float,
+    runway_months: float,
+    show_spinner: bool = False,
+) -> str:
+    sig = profile_signature(profile)
+    cached = st.session_state.get("baseline_summary")
+    cached_sig = st.session_state.get("baseline_profile_sig")
+    if cached and cached_sig == sig:
+        return cached
+
+    if show_spinner:
+        with st.spinner("Generating your baseline summary..."):
+            summary = generate_baseline_summary(profile, monthly_net, runway_months)
+    else:
+        summary = generate_baseline_summary(profile, monthly_net, runway_months)
+
+    st.session_state.baseline_summary = summary
+    st.session_state.baseline_profile_sig = sig
+    return summary
 
 
 def build_prompt(
@@ -406,9 +747,21 @@ def build_prompt(
     if scenario_note.strip():
         scenario_block = f"\nUser Scenario Request:\n- {scenario_note.strip()}\n"
 
+    monthly_addons_total = (
+        scenario.get("extra_monthly_expenses", 0.0)
+        + scenario.get("debt_payment_monthly", 0.0)
+        + scenario.get("healthcare_monthly", 0.0)
+        + scenario.get("dependent_care_monthly", 0.0)
+        + scenario.get("job_search_monthly", 0.0)
+    )
+    one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
+
     return f"""
 You are RiseArc, a financial assistant powered by Nemotron-3-Nano.
 Generate a concise, practical summary based on the user's profile and scenario.
+Do NOT provide investment advice, stock picks, buy/sell/hold guidance, or promises of returns.
+Avoid language that sounds like a recommendation to invest. Focus on cash flow, runway, and risk reduction.
+If asked about investing, redirect to budgeting, debt, and emergency savings fundamentals.
 
 Return in this format:
 Summary:
@@ -428,13 +781,24 @@ User Profile:
 - Savings: {money(profile['savings'])}
 - Total debt: {money(profile['debt'])}
 - Industry: {profile['industry']}
-- Job stability: {job_stability_value} (weight {job_stability_weight_value:+.0f})
+- Job stability: {job_stability_value}
 - Dependents: {profile['dependents']}
 
 Scenario:
 - Months unemployed: {scenario['months_unemployed']}
 - Expense cut: {scenario['expense_cut_pct']:.0f}%
 - Severance: {money(scenario['severance'])}
+- Unemployment benefit (monthly): {money(scenario.get('unemployment_benefit_monthly', 0.0))}
+- Other income (monthly): {money(scenario.get('other_income_monthly', 0.0))}
+- Debt payments (monthly): {money(scenario.get('debt_payment_monthly', 0.0))}
+- Healthcare / insurance (monthly): {money(scenario.get('healthcare_monthly', 0.0))}
+- Dependent care (monthly): {money(scenario.get('dependent_care_monthly', 0.0))}
+- Job search / reskilling (monthly): {money(scenario.get('job_search_monthly', 0.0))}
+- Other monthly expenses: {money(scenario.get('extra_monthly_expenses', 0.0))}
+- Total monthly add-ons: {money(monthly_addons_total)}
+- One-time expense: {money(scenario.get('one_time_expense', 0.0))}
+- Relocation / legal (one-time): {money(scenario.get('relocation_cost', 0.0))}
+- Total one-time costs: {money(one_time_total)}
 
 Computed Metrics:
 - Runway (months): {metrics['runway_months']:.1f}
@@ -442,6 +806,9 @@ Computed Metrics:
 - Adjusted risk score (0-100): {metrics['adjusted_risk_score']:.0f}
 - Debt ratio: {metrics['debt_ratio']:.2f}
 - Monthly expenses after cut: {money(metrics['monthly_expenses_cut'])}
+- Monthly support: {money(metrics.get('monthly_support', 0.0))}
+- Net monthly burn: {money(metrics.get('monthly_net_burn', 0.0))}
+- One-time expense: {money(metrics.get('one_time_expense', 0.0))}
 - Estimated savings leaks (monthly): {money(savings_total)}
 - Timeline signals: months_until_zero={timeline_stats['months_until_zero']:.0f}, max_drawdown={money(timeline_stats['max_drawdown'])}, trend_slope={money(timeline_stats['trend_slope'])}
 
@@ -478,11 +845,31 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     scenario = payload["scenario"]
 
     monthly_expenses_cut = profile["expenses_monthly"] * (1 - scenario["expense_cut_pct"] / 100.0)
-    runway_months = compute_runway(profile["savings"], monthly_expenses_cut, scenario["severance"])
+    monthly_support = scenario.get("unemployment_benefit_monthly", 0.0) + scenario.get(
+        "other_income_monthly", 0.0
+    )
+    monthly_addons = (
+        scenario.get("extra_monthly_expenses", 0.0)
+        + scenario.get("debt_payment_monthly", 0.0)
+        + scenario.get("healthcare_monthly", 0.0)
+        + scenario.get("dependent_care_monthly", 0.0)
+        + scenario.get("job_search_monthly", 0.0)
+    )
+    monthly_net_burn = monthly_expenses_cut + monthly_addons - monthly_support
+    one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
+    starting_balance = profile["savings"] + scenario.get("severance", 0.0) - one_time_total
+    if monthly_net_burn <= 0:
+        runway_months = 60.0
+    else:
+        runway_months = compute_runway(max(starting_balance, 0.0), monthly_net_burn, 0.0)
     debt_ratio = compute_debt_ratio(profile["debt"], profile["income_monthly"])
-    risk_score = compute_risk_score(
+    base_risk = compute_risk_score(
         runway_months, debt_ratio, profile["job_stability"], profile["industry"]
     )
+    if adjust_risk_for_scenario:
+        risk_score = adjust_risk_for_scenario(base_risk, runway_months, scenario["months_unemployed"])
+    else:
+        risk_score = base_risk
 
     adjusted_risk = risk_score
     alert = "No alerts yet."
@@ -495,13 +882,16 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         alert = f"Headline: {news_event['headline']} | Risk adjusted by {delta:+.0f} to {adjusted_risk:.0f}."
 
     timeline = build_timeline(
-        profile["savings"], monthly_expenses_cut, scenario["months_unemployed"], scenario["severance"]
+        starting_balance, max(monthly_net_burn, 0.0), max(scenario["months_unemployed"], 1), 0.0
     )
     timeline_stats = compute_timeline_stats(timeline)
     savings_total = total_savings_leaks([s["monthly_cost"] for s in payload["subscriptions"]])
 
     metrics = {
         "monthly_expenses_cut": monthly_expenses_cut,
+        "monthly_support": monthly_support,
+        "monthly_net_burn": monthly_net_burn,
+        "one_time_expense": one_time_total,
         "runway_months": runway_months,
         "debt_ratio": debt_ratio,
         "risk_score": risk_score,
@@ -598,6 +988,8 @@ def apply_demo_profile() -> None:
     scenario = SAMPLE_REQUEST.get("scenario", {})
     st.session_state.profile = profile
     st.session_state.show_profile_dialog = False
+    st.session_state.baseline_summary = None
+    st.session_state.baseline_profile_sig = None
     if scenario:
         st.session_state["months_unemployed"] = scenario.get("months_unemployed", 6)
         st.session_state["expense_cut"] = scenario.get("expense_cut_pct", 15)
@@ -607,55 +999,6 @@ def apply_demo_profile() -> None:
     for item in SAMPLE_REQUEST.get("subscriptions", []):
         key = f"sub_{item['name']}"
         st.session_state[key] = True
-
-
-def load_chat_sessions() -> List[Dict[str, Any]]:
-    if not CHAT_STORE_PATH.exists():
-        return []
-    try:
-        with CHAT_STORE_PATH.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        return data.get("sessions", [])
-    except Exception:
-        return []
-
-
-def save_chat_sessions(sessions: List[Dict[str, Any]]) -> None:
-    CHAT_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"sessions": sessions}
-    with CHAT_STORE_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-
-
-def save_current_chat_session(name: str, messages: List[Dict[str, str]]) -> None:
-    if not messages:
-        return
-    sessions = load_chat_sessions()
-    chat_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    seed_title = ""
-    for msg in messages:
-        if msg["role"] == "user":
-            seed_title = msg["content"]
-            break
-    title = name.strip() or (seed_title[:32] if seed_title else f"Conversation {len(sessions) + 1}")
-    sessions.insert(
-        0,
-        {
-            "id": chat_id,
-            "name": title,
-            "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
-            "messages": messages,
-        },
-    )
-    save_chat_sessions(sessions)
-
-
-def load_chat_session(chat_id: str) -> List[Dict[str, str]]:
-    sessions = load_chat_sessions()
-    for session in sessions:
-        if session["id"] == chat_id:
-            return session.get("messages", [])
-    return []
 
 
 def render_sidebar() -> None:
@@ -699,38 +1042,84 @@ def init_state() -> None:
         st.session_state.show_profile_dialog = True
     if "active_view" not in st.session_state:
         st.session_state.active_view = "Landing"
-    if "use_api" not in st.session_state:
-        st.session_state.use_api = True
-    if "api_url" not in st.session_state:
-        st.session_state.api_url = DEFAULT_API_URL
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
-    if "chat_session_id" not in st.session_state:
-        st.session_state.chat_session_id = "current"
-    if "draft_chat" not in st.session_state:
-        st.session_state.draft_chat = []
-    if "chat_save_name" not in st.session_state:
-        st.session_state.chat_save_name = ""
     if "result" not in st.session_state:
         st.session_state.result = None
+    if "baseline_summary" not in st.session_state:
+        st.session_state.baseline_summary = None
+    if "baseline_profile_sig" not in st.session_state:
+        st.session_state.baseline_profile_sig = None
+    if "months_unemployed" not in st.session_state:
+        st.session_state.months_unemployed = 6
+    if "expense_cut" not in st.session_state:
+        st.session_state.expense_cut = 15.0
+    if "severance" not in st.session_state:
+        st.session_state.severance = 3000.0
+    if "unemployment_benefit_monthly" not in st.session_state:
+        st.session_state.unemployment_benefit_monthly = 0.0
+    if "other_income_monthly" not in st.session_state:
+        st.session_state.other_income_monthly = 0.0
+    if "extra_monthly_expenses" not in st.session_state:
+        st.session_state.extra_monthly_expenses = 0.0
+    if "debt_payment_monthly" not in st.session_state:
+        st.session_state.debt_payment_monthly = 0.0
+    if "healthcare_monthly" not in st.session_state:
+        st.session_state.healthcare_monthly = 0.0
+    if "dependent_care_monthly" not in st.session_state:
+        st.session_state.dependent_care_monthly = 0.0
+    if "job_search_monthly" not in st.session_state:
+        st.session_state.job_search_monthly = 0.0
+    if "one_time_expense" not in st.session_state:
+        st.session_state.one_time_expense = 0.0
+    if "relocation_cost" not in st.session_state:
+        st.session_state.relocation_cost = 0.0
 
 
 @st.dialog("Welcome to RiseArc")
 def profile_dialog() -> None:
     st.markdown("Fill in your financial profile once. You can update it anytime.")
     profile = st.session_state.profile or {}
+    has_profile = bool(profile)
+
+    def parse_float_input(raw: str, fallback: float, label: str) -> float:
+        if raw is None or raw.strip() == "":
+            return fallback
+        try:
+            return float(raw.replace(",", ""))
+        except ValueError:
+            st.error(f"Please enter a valid number for {label}.")
+            raise
+
+    def parse_int_input(raw: str, fallback: int, label: str) -> int:
+        if raw is None or raw.strip() == "":
+            return fallback
+        try:
+            return int(float(raw.replace(",", "")))
+        except ValueError:
+            st.error(f"Please enter a valid whole number for {label}.")
+            raise
+
     with st.form("profile_form"):
-        income = st.number_input(
-            "Monthly income", min_value=0.0, value=float(profile.get("income_monthly", 5200.0)), step=100.0
+        income_raw = st.text_input(
+            "Monthly income",
+            value="",
+            placeholder="e.g. 5200",
         )
-        expenses = st.number_input(
-            "Monthly expenses", min_value=0.0, value=float(profile.get("expenses_monthly", 3400.0)), step=100.0
+        expenses_raw = st.text_input(
+            "Monthly expenses",
+            value="",
+            placeholder="e.g. 3400",
         )
-        savings = st.number_input(
-            "Savings", min_value=0.0, value=float(profile.get("savings", 12000.0)), step=500.0
+        savings_raw = st.text_input(
+            "Savings",
+            value="",
+            placeholder="e.g. 12000",
         )
-        debt = st.number_input(
-            "Total debt", min_value=0.0, value=float(profile.get("debt", 15000.0)), step=500.0
+        debt_raw = st.text_input(
+            "Total debt",
+            value="",
+            placeholder="e.g. 15000",
         )
         industries = ["Tech", "Finance", "Healthcare", "Education", "Retail", "Manufacturing", "Hospitality", "Other"]
         industry_value = profile.get("industry", "Tech")
@@ -742,10 +1131,27 @@ def profile_dialog() -> None:
         job_index = job_keys.index(current_job) if current_job in job_keys else 0
         job_label = st.selectbox("Job stability", job_keys, index=job_index)
         job_stability = JOB_STABILITY_OPTIONS[job_label]
-        dependents = st.number_input("Dependents", min_value=0, value=int(profile.get("dependents", 0)), step=1)
+        dependents_raw = st.text_input(
+            "Dependents",
+            value="",
+            placeholder="e.g. 0",
+        )
         submitted = st.form_submit_button("Save profile")
 
     if submitted:
+        try:
+            income = parse_float_input(income_raw, float(profile.get("income_monthly", 0.0)), "Monthly income")
+            expenses = parse_float_input(expenses_raw, float(profile.get("expenses_monthly", 0.0)), "Monthly expenses")
+            savings = parse_float_input(savings_raw, float(profile.get("savings", 0.0)), "Savings")
+            debt = parse_float_input(debt_raw, float(profile.get("debt", 0.0)), "Total debt")
+            dependents = parse_int_input(dependents_raw, int(profile.get("dependents", 0)), "Dependents")
+        except ValueError:
+            return
+
+        if not has_profile:
+            if income <= 0 or expenses <= 0:
+                st.error("Monthly income and expenses are required.")
+                return
         st.session_state.profile = {
             "income_monthly": income,
             "expenses_monthly": expenses,
@@ -755,6 +1161,14 @@ def profile_dialog() -> None:
             "job_stability": job_stability,
             "dependents": int(dependents),
         }
+        st.session_state.baseline_summary = None
+        st.session_state.baseline_profile_sig = None
+        monthly_net = income - expenses
+        if monthly_net >= 0:
+            runway_months = 60.0
+        else:
+            runway_months = compute_runway(savings, abs(monthly_net), 0.0) if compute_runway else 0.0
+        ensure_baseline_summary(st.session_state.profile, monthly_net, runway_months, show_spinner=True)
         st.session_state.show_profile_dialog = False
         st.success("Profile saved.")
         st.rerun()
@@ -855,6 +1269,15 @@ def build_payload_from_state(
     months_unemployed: int,
     expense_cut_pct: float,
     severance: float,
+    unemployment_benefit_monthly: float,
+    other_income_monthly: float,
+    extra_monthly_expenses: float,
+    debt_payment_monthly: float,
+    healthcare_monthly: float,
+    dependent_care_monthly: float,
+    job_search_monthly: float,
+    one_time_expense: float,
+    relocation_cost: float,
     subscriptions: Dict[str, float],
     news_event: Dict[str, Any],
     scenario_note: str = "",
@@ -865,6 +1288,15 @@ def build_payload_from_state(
             "months_unemployed": months_unemployed,
             "expense_cut_pct": expense_cut_pct,
             "severance": severance,
+            "unemployment_benefit_monthly": unemployment_benefit_monthly,
+            "other_income_monthly": other_income_monthly,
+            "extra_monthly_expenses": extra_monthly_expenses,
+            "debt_payment_monthly": debt_payment_monthly,
+            "healthcare_monthly": healthcare_monthly,
+            "dependent_care_monthly": dependent_care_monthly,
+            "job_search_monthly": job_search_monthly,
+            "one_time_expense": one_time_expense,
+            "relocation_cost": relocation_cost,
         },
         "subscriptions": [
             {"name": name, "monthly_cost": cost}
@@ -895,37 +1327,179 @@ def render_scenario_builder() -> None:
         height=90,
     )
     st.session_state.scenario_note = scenario_note
+    parse_cols = st.columns([1, 3])
+    with parse_cols[0]:
+        parse_clicked = st.button("Parse scenario")
+    if parse_clicked:
+        with st.spinner("Parsing scenario..."):
+            parsed = extract_scenario_from_text(scenario_note)
+        applied = apply_scenario_update(parsed)
+        if applied:
+            summary_bits = []
+            if "months_unemployed" in applied:
+                summary_bits.append(f"{int(applied['months_unemployed'])} months unemployed")
+            if "expense_cut_pct" in applied:
+                summary_bits.append(f"{applied['expense_cut_pct']:.0f}% expense cut")
+            if "severance" in applied:
+                summary_bits.append(f"severance {format_currency(applied['severance'])}")
+            if "unemployment_benefit_monthly" in applied:
+                summary_bits.append(
+                    f"benefits {format_currency(applied['unemployment_benefit_monthly'])}/mo"
+                )
+            if "other_income_monthly" in applied:
+                summary_bits.append(f"other income {format_currency(applied['other_income_monthly'])}/mo")
+            if "extra_monthly_expenses" in applied:
+                summary_bits.append(f"extra expenses {format_currency(applied['extra_monthly_expenses'])}/mo")
+            if "one_time_expense" in applied:
+                summary_bits.append(f"one-time {format_currency(applied['one_time_expense'])}")
+            st.success("Parsed: " + ", ".join(summary_bits))
+        else:
+            st.info("I couldn't extract numbers. Try including months, %, or dollar amounts.")
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="card-title">Scenario Inputs</div>', unsafe_allow_html=True)
-    st.markdown('<div class="field-label">Months unemployed</div>', unsafe_allow_html=True)
-    months_unemployed = st.slider(
-        "",
-        min_value=1,
-        max_value=18,
-        value=st.session_state.get("months_unemployed", 6),
-        key="months_unemployed",
-        label_visibility="collapsed",
-    )
-    st.markdown('<div class="field-label">Expense cut (%)</div>', unsafe_allow_html=True)
-    expense_cut_pct = st.slider(
-        "",
-        min_value=0,
-        max_value=50,
-        value=st.session_state.get("expense_cut", 15),
-        key="expense_cut",
-        label_visibility="collapsed",
-    )
-    st.markdown('<div class="field-label">Severance / payout</div>', unsafe_allow_html=True)
-    severance = st.number_input(
+    left, right = st.columns(2)
+    with left:
+        st.markdown('<div class="field-label">Months unemployed</div>', unsafe_allow_html=True)
+        months_unemployed = st.number_input(
+            "",
+            min_value=0,
+            max_value=36,
+            value=int(st.session_state.get("months_unemployed", 6)),
+            step=1,
+            key="months_unemployed",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Expense cut (%)</div>', unsafe_allow_html=True)
+        expense_cut_pct = st.number_input(
+            "",
+            min_value=0.0,
+            max_value=70.0,
+            value=float(st.session_state.get("expense_cut", 15.0)),
+            step=1.0,
+            key="expense_cut",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Severance / payout</div>', unsafe_allow_html=True)
+        severance = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("severance", 3000.0)),
+            step=500.0,
+            key="severance",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Unemployment benefits (monthly)</div>', unsafe_allow_html=True)
+        unemployment_benefit_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("unemployment_benefit_monthly", 0.0)),
+            step=100.0,
+            key="unemployment_benefit_monthly",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Other income (monthly)</div>', unsafe_allow_html=True)
+        other_income_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("other_income_monthly", 0.0)),
+            step=100.0,
+            key="other_income_monthly",
+            label_visibility="collapsed",
+        )
+    with right:
+        st.markdown('<div class="field-label">Debt payments (monthly)</div>', unsafe_allow_html=True)
+        debt_payment_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("debt_payment_monthly", 0.0)),
+            step=50.0,
+            key="debt_payment_monthly",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Healthcare / insurance (monthly)</div>', unsafe_allow_html=True)
+        healthcare_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("healthcare_monthly", 0.0)),
+            step=50.0,
+            key="healthcare_monthly",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Dependent care (monthly)</div>', unsafe_allow_html=True)
+        dependent_care_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("dependent_care_monthly", 0.0)),
+            step=50.0,
+            key="dependent_care_monthly",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Job search / reskilling (monthly)</div>', unsafe_allow_html=True)
+        job_search_monthly = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("job_search_monthly", 0.0)),
+            step=25.0,
+            key="job_search_monthly",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Other monthly expenses (misc)</div>', unsafe_allow_html=True)
+        extra_monthly_expenses = st.number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state.get("extra_monthly_expenses", 0.0)),
+            step=50.0,
+            key="extra_monthly_expenses",
+            label_visibility="collapsed",
+        )
+
+    st.markdown('<div class="field-label">One-time expense</div>', unsafe_allow_html=True)
+    one_time_expense = st.number_input(
         "",
         min_value=0.0,
-        value=float(st.session_state.get("severance", 3000.0)),
-        step=500.0,
-        key="severance",
+        value=float(st.session_state.get("one_time_expense", 0.0)),
+        step=100.0,
+        key="one_time_expense",
+        label_visibility="collapsed",
+    )
+    st.markdown('<div class="field-label">Relocation / legal (one-time)</div>', unsafe_allow_html=True)
+    relocation_cost = st.number_input(
+        "",
+        min_value=0.0,
+        value=float(st.session_state.get("relocation_cost", 0.0)),
+        step=100.0,
+        key="relocation_cost",
         label_visibility="collapsed",
     )
     st.markdown("</div>", unsafe_allow_html=True)
+
+    monthly_support = unemployment_benefit_monthly + other_income_monthly
+    monthly_addons = (
+        debt_payment_monthly
+        + healthcare_monthly
+        + dependent_care_monthly
+        + job_search_monthly
+        + extra_monthly_expenses
+    )
+    one_time_total = one_time_expense + relocation_cost
+    monthly_expenses_cut = st.session_state.profile["expenses_monthly"] * (1 - expense_cut_pct / 100.0)
+    monthly_net_burn = monthly_expenses_cut + monthly_addons - monthly_support
+
+    st.markdown(
+        f"""
+        <div class="card">
+          <div class="card-title">Scenario Summary</div>
+          <div class="card-text">Unemployment: {months_unemployed} months</div>
+          <div class="card-text">Expense cut: {expense_cut_pct:.0f}%</div>
+          <div class="card-text">Monthly support: {format_currency(monthly_support)} / mo</div>
+          <div class="card-text">Monthly add-ons: {format_currency(monthly_addons)} / mo</div>
+          <div class="card-text">Net monthly burn: {format_currency(monthly_net_burn)} / mo</div>
+          <div class="card-text">One-time costs: {format_currency(one_time_total)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown("\n")
     if st.button("Run Analysis", type="primary"):
@@ -934,6 +1508,15 @@ def render_scenario_builder() -> None:
             months_unemployed=int(months_unemployed),
             expense_cut_pct=float(expense_cut_pct),
             severance=severance,
+            unemployment_benefit_monthly=unemployment_benefit_monthly,
+            other_income_monthly=other_income_monthly,
+            extra_monthly_expenses=extra_monthly_expenses,
+            debt_payment_monthly=debt_payment_monthly,
+            healthcare_monthly=healthcare_monthly,
+            dependent_care_monthly=dependent_care_monthly,
+            job_search_monthly=job_search_monthly,
+            one_time_expense=one_time_expense,
+            relocation_cost=relocation_cost,
             subscriptions={},
             news_event=None,
             scenario_note=scenario_note,
@@ -1053,21 +1636,16 @@ def render_survival_timeline() -> None:
         st.caption(f"Estimated runway at current burn: {runway_months:.1f} months")
 
     st.subheader("Nemotron Summary")
-    if query_nemotron and extract_text:
-        prompt = (
-            "You are RiseArc. Summarize the user's current financial health in plain language. "
-            "No formulas, LaTeX, or code. Provide 4-6 bullet points and 2 practical next steps.\n"
-            f"Profile: income {income}, expenses {expenses}, savings {savings}, debt {debt}, "
-            f"industry {profile.get('industry', 'Other')}, stability {profile.get('job_stability', 'stable')}.\n"
-            f"Current cash flow: {monthly_net} per month. Runway: {runway_months:.1f} months."
-        )
-        try:
-            summary_text = sanitize_llm_output(extract_text(query_nemotron(prompt)))
-        except Exception as exc:
-            summary_text = f"[nemotron error] {exc}"
-        st.text(summary_text)
-    else:
-        st.text("Nemotron is not connected. Start the model server to generate a summary.")
+    summary_text = ensure_baseline_summary(profile, monthly_net, runway_months)
+    st.markdown(
+        f"""
+        <div class="summary-block">
+          <div class="summary-title">Baseline Summary</div>
+          <div class="summary-text">{html.escape(summary_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_chat() -> None:
@@ -1127,16 +1705,25 @@ def render_chat() -> None:
         context_lines: List[str] = [
             "You are RiseArc, a financial assistant. Be concise, practical, and grounded in the user's data.",
             "Provide educational guidance, not professional financial advice.",
+            "Never provide investment advice or asset recommendations. Avoid buy/sell/hold language.",
             "Always reply to the user in the same font.",
             "Always be helpful, polite, and professional",
             "Always reply to the user in plain human language with no formulas, LaTeX, or code formatting.",
             "Keep answers short unless the user asks for details.",
+            "Use a friendly, reassuring tone as a financial guardian.",
+            "Explain for non-experts: avoid jargon or define it in plain words.",
+            "Sound human and supportive, not robotic or overly formal.",
+            "When expressing ranges, use words like '3 to 6' instead of dashes.",
+            "Structure every response with clear signposting:",
+            "Summary: (1-2 short sentences)",
+            "What this means: (2-3 short bullets)",
+            "Next steps: (2-3 short bullets)",
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
                 f"savings {llm_profile['savings']}, debt {llm_profile['debt']}, "
-                f"industry {llm_profile['industry']}, stability {stability_label} "
-                f"(weight {stability_weight_value:+.0f}), dependents {llm_profile['dependents']}"
+                f"industry {llm_profile['industry']}, stability {stability_label}, "
+                f"dependents {llm_profile['dependents']}"
             ),
         ]
         if llm_metrics:
@@ -1161,9 +1748,9 @@ def render_chat() -> None:
                 response = sanitize_llm_output(extract_text(query_nemotron(prompt)))
             except Exception as exc:
                 response = f"[nemotron error] {exc}"
-            typing_placeholder.text(response)
+            typing_placeholder.text(format_readable_text(response))
 
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.chat_history.append({"role": "assistant", "content": format_readable_text(response)})
 
 
 def main() -> None:

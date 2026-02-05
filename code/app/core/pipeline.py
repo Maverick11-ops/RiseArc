@@ -13,6 +13,7 @@ from .tools import (
     compute_debt_ratio,
     compute_risk_score,
     compute_runway,
+    adjust_risk_for_scenario,
     job_stability_label,
     job_stability_weight,
     total_savings_leaks,
@@ -42,7 +43,8 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     else:
         runway_months = compute_runway(max(starting_balance, 0.0), monthly_net_burn, 0.0)
     debt_ratio = compute_debt_ratio(profile.debt, profile.income_monthly)
-    risk_score = compute_risk_score(runway_months, debt_ratio, profile.job_stability, profile.industry)
+    base_risk = compute_risk_score(runway_months, debt_ratio, profile.job_stability, profile.industry)
+    risk_score = adjust_risk_for_scenario(base_risk, runway_months, scenario.months_unemployed)
 
     adjusted_risk = risk_score
     alert = "No alerts yet."
@@ -54,7 +56,7 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
         adjusted_risk = clamp(risk_score + delta, 0.0, 100.0)
         alert = f"Headline: {event.headline} | Risk adjusted by {delta:+.0f} to {adjusted_risk:.0f}."
 
-    timeline = build_timeline(starting_balance, max(monthly_net_burn, 0.0), scenario.months_unemployed, 0.0)
+    timeline = build_timeline(starting_balance, max(monthly_net_burn, 0.0), max(scenario.months_unemployed, 1), 0.0)
     timeline_stats = compute_timeline_stats(timeline)
 
     savings_total = total_savings_leaks([s.monthly_cost for s in payload.subscriptions])

@@ -117,6 +117,20 @@ def compute_risk_score(
     return clamp(score, 0.0, 100.0)
 
 
+def adjust_risk_for_scenario(
+    base_score: float,
+    runway_months: float,
+    months_unemployed: float,
+) -> float:
+    if months_unemployed <= 0:
+        return clamp(base_score - 5.0, 0.0, 100.0)
+    gap = max(months_unemployed - runway_months, 0.0)
+    cushion = max(runway_months - months_unemployed, 0.0)
+    penalty = clamp(gap * 4.0, 0.0, 20.0)
+    reduction = clamp(cushion * 1.5, 0.0, 10.0)
+    return clamp(base_score + penalty - reduction, 0.0, 100.0)
+
+
 def build_timeline(
     starting_savings: float,
     monthly_expenses: float,
