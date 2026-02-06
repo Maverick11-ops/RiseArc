@@ -605,6 +605,8 @@ def sanitize_llm_output(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    cleaned = re.sub(r"\$(savings|debt|income|expenses|cash|balance|runway)\b", r"\1", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b~\s*\$(\d[\d,]*)\s*(\d+)\s*=\s*\$?(\d[\d,]*)\b", r"$\1 x \2 = $\3", cleaned)
     money_keywords = r"(cash flow|savings|debt|expenses|income|surplus|deficit|payment|payments|balance|budget|costs?|spend|spending|buffer|reserve)"
     def _prefix_dollar(match: re.Match) -> str:
         return f"{match.group(1)}${match.group(2)}"
@@ -678,6 +680,20 @@ def format_baseline_summary(text: str) -> str:
         for bullet in bullets:
             output_lines.append(f"- {bullet}")
     return "\n".join(output_lines).strip()
+
+
+def format_nemotron_error(message: str, context: str) -> str:
+    base = "Nemotron is unavailable right now. Please start the server and try again."
+    if not message:
+        return base
+    lowered = message.lower()
+    if "timeout" in lowered:
+        return f"{base} The request timed out."
+    if "connection" in lowered or "refused" in lowered:
+        return f"{base} We could not reach the server."
+    if "unavailable" in lowered:
+        return base
+    return base
 
 
 def format_currency(value: float) -> str:
@@ -863,7 +879,7 @@ def generate_baseline_summary(
     runway_months: float,
 ) -> str:
     if not query_nemotron or not extract_text:
-        return "Nemotron is not connected. Start the model server to generate a summary."
+        return "Nemotron is unavailable right now. Please start the server and try again."
 
     def money(value: float) -> str:
         return f"${value:,.0f}"
@@ -903,7 +919,7 @@ def generate_baseline_summary(
         cleaned = sanitize_llm_output(extract_text(query_nemotron(prompt)))
         return format_baseline_summary(strip_trailing_questions(cleaned))
     except Exception as exc:
-        return f"[nemotron error] {exc}"
+        return format_nemotron_error(str(exc), "baseline summary")
 
 
 def ensure_baseline_summary(
@@ -925,7 +941,7 @@ def ensure_baseline_summary(
         summary = generate_baseline_summary(profile, monthly_net, runway_months)
 
     if summary.startswith("[nemotron error]"):
-        return summary
+        return format_nemotron_error(summary, "baseline summary")
 
     st.session_state.baseline_summary = summary
     st.session_state.baseline_profile_sig = sig
@@ -977,6 +993,10 @@ Actions:
 - ...
 Warnings:
 - ...
+
+Avoid template placeholders like $debt, $savings, {brackets}, or variables. Use real numbers only.
+If you estimate a range, write it clearly (e.g., "$3,500 to $4,000").
+Do not write equations inline (e.g., "~$3,500 6 = $21,000"). Spell out the result instead.
 
 User Profile:
 - Monthly income: {money(profile['income_monthly'])}
@@ -1123,7 +1143,7 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         summary = sanitize_llm_output(extract_text(query_nemotron(prompt)))
     except Exception as exc:
-        summary = f"[nemotron error] {exc}"
+        summary = format_nemotron_error(str(exc), "scenario analysis")
 
     return {
         "metrics": metrics,
@@ -1935,7 +1955,7 @@ def render_chat() -> None:
             st.text(message["content"])
 
     if not query_nemotron:
-        st.warning("Nemotron is not connected. Start the model server to enable chat.")
+        st.warning("Nemotron is unavailable right now. Please start the server to enable chat.")
         return
 
     quick_input = None
@@ -2015,7 +2035,7 @@ def render_chat() -> None:
             try:
                 response = sanitize_llm_output(extract_text(query_nemotron(prompt)))
             except Exception as exc:
-                response = f"[nemotron error] {exc}"
+                response = format_nemotron_error(str(exc), "chat response")
             typing_placeholder.text(format_readable_text(response))
 
         st.session_state.chat_history.append({"role": "assistant", "content": format_readable_text(response)})
