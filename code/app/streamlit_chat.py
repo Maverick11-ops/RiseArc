@@ -681,7 +681,23 @@ def format_baseline_summary(text: str) -> str:
         output_lines.append(f"{header}:")
         for bullet in bullets:
             output_lines.append(f"- {bullet}")
-    return "\n".join(output_lines).strip()
+    return tidy_summary_spacing("\n".join(output_lines).strip())
+
+
+def tidy_summary_spacing(text: str) -> str:
+    if not text:
+        return ""
+    raw_lines = [line.rstrip() for line in text.splitlines()]
+    cleaned_lines: List[str] = []
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.endswith(":") and cleaned_lines:
+            if cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+        cleaned_lines.append(stripped)
+    return "\n".join(cleaned_lines).strip()
 
 
 def format_nemotron_error(message: str, context: str) -> str:
@@ -1932,6 +1948,7 @@ def render_survival_timeline() -> None:
 
     st.subheader("Nemotron Summary")
     summary_text = ensure_baseline_summary(profile, monthly_net, runway_months)
+    summary_text = tidy_summary_spacing(summary_text)
     st.markdown(
         f"""
         <div class="summary-block">
