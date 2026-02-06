@@ -38,7 +38,7 @@ try:
         job_stability_weight,
         total_savings_leaks,
     )
-    from app.ai.nemotron_client import extract_text, query_nemotron
+    from app.ai.nemotron_client import check_nemotron_online, extract_text, query_nemotron
 except Exception:
     build_timeline = None
     clamp = None
@@ -57,6 +57,7 @@ except Exception:
     total_savings_leaks = None
     extract_text = None
     query_nemotron = None
+    check_nemotron_online = None
 
 
 JOB_STABILITY_OPTIONS = {
@@ -101,10 +102,19 @@ html, body, [class*="st-"] {
               linear-gradient(160deg, var(--bg-1), var(--bg-2));
 }
 
+div.block-container {
+  padding-top: 2.2rem;
+  padding-bottom: 2.2rem;
+}
+
 [data-testid="stSidebar"] {
   background: linear-gradient(180deg, rgba(11, 15, 26, 0.98), rgba(15, 23, 42, 0.98));
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   min-width: 280px;
+}
+
+[data-testid="stSidebar"] .block-container {
+  padding: 1.6rem 1.2rem 2rem 1.2rem;
 }
 
 [data-testid="stSidebar"] header,
@@ -141,12 +151,20 @@ div[role="tooltip"], div[data-baseweb="tooltip"] {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.35rem 0.6rem;
+  padding: 0.2rem 0.5rem;
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.6);
   color: var(--muted);
+}
+
+.status-stack {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
 }
 
 .status-pill.ready {
@@ -155,8 +173,8 @@ div[role="tooltip"], div[data-baseweb="tooltip"] {
 }
 
 .section {
-  margin-top: 1.2rem;
-  margin-bottom: 1.2rem;
+  margin-top: 1.8rem;
+  margin-bottom: 1.8rem;
 }
 
 h1, h2, h3, h4 {
@@ -168,7 +186,7 @@ h1, h2, h3, h4 {
   background: linear-gradient(135deg, rgba(79, 70, 229, 0.16), rgba(14, 165, 233, 0.12));
   border: 1px solid var(--line);
   border-radius: 18px;
-  padding: 28px 32px;
+  padding: 32px 36px;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.4);
   backdrop-filter: blur(12px);
 }
@@ -181,12 +199,12 @@ h1, h2, h3, h4 {
 .page-title {
   font-size: 1.8rem;
   font-weight: 700;
-  margin: 0.4rem 0 0.2rem 0;
+  margin: 0.8rem 0 0.4rem 0;
 }
 
 .page-subtitle {
   color: var(--muted);
-  margin-bottom: 0.8rem;
+  margin-bottom: 1.2rem;
 }
 
 .hero-subtitle {
@@ -210,7 +228,8 @@ h1, h2, h3, h4 {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 18px 18px 16px 18px;
+  padding: 22px 22px 20px 22px;
+  margin-bottom: 16px;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
   backdrop-filter: blur(10px);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -223,12 +242,13 @@ h1, h2, h3, h4 {
 
 .card-title {
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .card-text {
   color: var(--muted);
   font-size: 0.9rem;
+  margin-bottom: 6px;
 }
 
 .stButton > button {
@@ -264,12 +284,16 @@ div[data-testid="stMetric"] label {
   border-radius: 10px !important;
 }
 
+.stTextInput, .stNumberInput, .stSelectbox, .stSlider {
+  margin-bottom: 0.7rem;
+}
+
 div[data-testid="stChatMessage"] {
   background: var(--panel-strong);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
 }
 
 div[data-testid="stChatMessage"] [data-testid="stIcon"] {
@@ -326,8 +350,8 @@ button[data-testid="stSidebarCollapseButton"] {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
-  padding: 18px 20px;
-  margin-bottom: 16px;
+  padding: 22px 24px;
+  margin-bottom: 20px;
 }
 
 .field-label {
@@ -365,7 +389,9 @@ div[data-baseweb="input"] {
   background: linear-gradient(135deg, rgba(14, 165, 233, 0.16), rgba(79, 70, 229, 0.12));
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 16px;
-  padding: 18px 20px;
+  padding: 22px 24px;
+  margin-top: 12px;
+  margin-bottom: 18px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.35);
 }
 
@@ -384,23 +410,33 @@ div[data-baseweb="input"] {
   line-height: 1.55;
 }
 
+.stMarkdown p {
+  margin-bottom: 0.8rem;
+}
+
+.stMarkdown ul,
+.stMarkdown ol {
+  margin-top: 0.4rem;
+  margin-bottom: 0.8rem;
+}
+
 .section-title {
   font-family: 'Space Grotesk', sans-serif;
   font-size: 1.05rem;
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.4rem;
 }
 
 .section-subtitle {
   color: var(--muted);
-  margin-bottom: 0.6rem;
+  margin-bottom: 1rem;
 }
 
 .spacer-sm {
-  height: 0.6rem;
+  height: 0.8rem;
 }
 
 .spacer-md {
-  height: 1rem;
+  height: 1.4rem;
 }
 
 .typing .dots span:nth-child(2) { animation-delay: 0.2s; }
@@ -563,6 +599,21 @@ def sanitize_llm_output(text: str) -> str:
         return f"${amount * 1000:,.0f}"
 
     cleaned = re.sub(r"\$?(\d+(?:\.\d+)?)\s*k\b", _k_to_dollars, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\$(\d+(?:\.\d+)?)\s*([kmb])\b",
+        lambda m: f"${m.group(1)}{m.group(2).upper()}",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    money_keywords = r"(cash flow|savings|debt|expenses|income|surplus|deficit|payment|payments|balance|budget|costs?|spend|spending|buffer|reserve)"
+    def _prefix_dollar(match: re.Match) -> str:
+        return f"{match.group(1)}${match.group(2)}"
+    cleaned = re.sub(
+        rf"({money_keywords}[^\d$]{{0,40}})(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)\b",
+        _prefix_dollar,
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = re.sub(r"(\\$\\d[\\d,]*)(?=\\$)", r"\\1 - ", cleaned)
     cleaned = re.sub(r"(\\$\\d[\\d,]*)(\\d{1,3}(?:,\\d{3})+)", r"\\1 - \\2", cleaned)
     cleaned = re.sub(r"\\b(\\d{1,2})-(\\d{1,2})\\s+months\\b", r"\\1 to \\2 months", cleaned, flags=re.IGNORECASE)
@@ -615,10 +666,14 @@ def format_baseline_summary(text: str) -> str:
         return cleaned
 
     output_lines: List[str] = []
+    first_section = True
     for header in ["Summary", "Actions", "Warnings"]:
         bullets = [_clean_bullet(item) for item in sections[header] if item.strip()]
         if not bullets:
             continue
+        if not first_section:
+            output_lines.append("")
+        first_section = False
         output_lines.append(f"{header}:")
         for bullet in bullets:
             output_lines.append(f"- {bullet}")
@@ -638,6 +693,16 @@ def format_readable_text(text: str) -> str:
     if len(sentences) <= 2:
         return text
     return "\n".join(sentences)
+
+
+@st.cache_data(ttl=5)
+def get_nemotron_status() -> bool:
+    if not check_nemotron_online:
+        return False
+    try:
+        return bool(check_nemotron_online())
+    except Exception:
+        return False
 
 
 def safe_json_from_text(text: str) -> Dict[str, Any]:
@@ -800,6 +865,9 @@ def generate_baseline_summary(
     if not query_nemotron or not extract_text:
         return "Nemotron is not connected. Start the model server to generate a summary."
 
+    def money(value: float) -> str:
+        return f"${value:,.0f}"
+
     debt_ratio = compute_debt_ratio(profile.get("debt", 0.0), profile.get("income_monthly", 0.0)) if compute_debt_ratio else 0.0
     risk_score = (
         compute_risk_score(
@@ -825,10 +893,10 @@ def generate_baseline_summary(
         "Summary:\n- ...\n- ...\n- ...\n"
         "Actions:\n- ...\n- ...\n- ...\n"
         "Warnings:\n- ...\n- ...\n- ...\n\n"
-        f"Profile: income {profile.get('income_monthly', 0)}, expenses {profile.get('expenses_monthly', 0)}, "
-        f"savings {profile.get('savings', 0)}, debt {profile.get('debt', 0)}, "
+        f"Profile: income {money(profile.get('income_monthly', 0))}, expenses {money(profile.get('expenses_monthly', 0))}, "
+        f"savings {money(profile.get('savings', 0))}, debt {money(profile.get('debt', 0))}, "
         f"industry {profile.get('industry', 'Other')}, stability {profile.get('job_stability', 'stable')}.\n"
-        f"Current snapshot: cash flow {monthly_net} per month, runway {runway_months:.1f} months, "
+        f"Current snapshot: cash flow {money(monthly_net)} per month, runway {runway_months:.1f} months, "
         f"debt ratio {debt_ratio:.2f}, risk score {risk_score:.0f}."
     )
     try:
@@ -1160,14 +1228,18 @@ def render_sidebar() -> None:
         profile_ready = st.session_state.profile is not None
         profile_class = "ready" if profile_ready else ""
         profile_label = "Profile: Ready" if profile_ready else "Profile: Incomplete"
+        nemotron_online = get_nemotron_status()
+        nemotron_class = "ready" if nemotron_online else ""
+        nemotron_label = "Nemotron: Online" if nemotron_online else "Nemotron: Offline"
         st.markdown(
-            f'<div class="status-pill {profile_class}">{profile_label}</div>',
+            f"""
+            <div class="status-stack">
+              <div class="status-pill {profile_class}">{profile_label}</div>
+              <div class="status-pill {nemotron_class}">{nemotron_label}</div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
-        if query_nemotron:
-            st.markdown('<div class="status-pill ready">Nemotron: Ready</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="status-pill">Nemotron: Offline</div>', unsafe_allow_html=True)
 
 
 def init_state() -> None:
