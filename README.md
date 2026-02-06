@@ -1,6 +1,6 @@
 # RiseArc, The Nemotron-Powered Financial Resilience Guardian
 
-RiseArc is a prototype financial risk analysis application powered by NVIDIA Nemotron-3-Nano. It simulates personal financial shock scenarios (such as job loss), computes risk metrics, and converts those results into clear, actionable plan.
+RiseArc is a prototype financial artificial intelligence application powered by NVIDIA Nemotron-3-Nano. It simulates personal financial shock scenarios (such as job loss), computes risk metrics, and converts those results into clear, actionable plan.
 
 RiseArc is *not* just another chatbot. It is a profile-aware financial analysis system designed to help users understand how fragile or resilient their situation is under stress.
 
@@ -10,7 +10,7 @@ RiseArc is *not* just another chatbot. It is a profile-aware financial analysis 
 
 As employment risk and financial shocks becomes harder to predict, people need tools that help them reason about financial downside scenarios before they happen.
 
-RiseArc focuses on **anticipation rather than reaction**; helping users understand how long they can sustain themselves, where their risk comes from, and what actions matter most. Its job is to ensure that people can survive through financial shocks and be able to put food on their tables.
+RiseArc focuses on **anticipation rather than reaction**; helping users understand how long they can sustain themselves, where their risk comes from, and what actions matter most. Its job is to prepare people so that they can survive through financial shocks and be able to put food on their tables.
 
 ---
 
@@ -80,5 +80,5 @@ This architecture separates calculation from reasoning to ensure reliability.
 - **Improved UI and UX:** Add better UI and UX designed for maximum user satisfaction. 
 - **RAG:** Add a real time financial/economic news ingestion system using RAG. 
 - **Finetune Nemotron:** Finetune the Nemotron-3-Nano model so that it is specifically used for the finance domain
-- **Nemotron Super:** Incorporate Nemotron-3-Super for much stronger reasoning and agentic behavior.
+- **Nemotron Super:** Incorporate Nemotron Super for much stronger reasoning and agentic behavior.
 - and much more soon

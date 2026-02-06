@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List
@@ -606,6 +607,7 @@ def sanitize_llm_output(text: str) -> str:
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(r"\$(savings|debt|income|expenses|cash|balance|runway)\b", r"\1", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\$([A-Za-z_]+)\b", r"\1", cleaned)
     cleaned = re.sub(r"\b~\s*\$(\d[\d,]*)\s*(\d+)\s*=\s*\$?(\d[\d,]*)\b", r"$\1 x \2 = $\3", cleaned)
     money_keywords = r"(cash flow|savings|debt|expenses|income|surplus|deficit|payment|payments|balance|budget|costs?|spend|spending|buffer|reserve)"
     def _prefix_dollar(match: re.Match) -> str:
@@ -711,14 +713,25 @@ def format_readable_text(text: str) -> str:
     return "\n".join(sentences)
 
 
-@st.cache_data(ttl=5)
 def get_nemotron_status() -> bool:
+    last_ok = st.session_state.get("nemotron_last_ok")
+    last_checked = st.session_state.get("nemotron_last_checked", 0.0)
+    if last_ok is not None and time.time() - last_checked < 60:
+        return bool(last_ok)
     if not check_nemotron_online:
         return False
     try:
-        return bool(check_nemotron_online())
+        status = bool(check_nemotron_online())
+        st.session_state.nemotron_last_ok = status
+        st.session_state.nemotron_last_checked = time.time()
+        return status
     except Exception:
         return False
+
+
+def record_nemotron_status(is_online: bool) -> None:
+    st.session_state.nemotron_last_ok = bool(is_online)
+    st.session_state.nemotron_last_checked = time.time()
 
 
 def safe_json_from_text(text: str) -> Dict[str, Any]:
@@ -800,7 +813,9 @@ User request: {user_text}
 
     try:
         raw = extract_text(query_nemotron(prompt))
+        record_nemotron_status(True)
     except Exception:
+        record_nemotron_status(False)
         return regex_extract_scenario(user_text)
 
     parsed = safe_json_from_text(raw)
@@ -917,8 +932,10 @@ def generate_baseline_summary(
     )
     try:
         cleaned = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+        record_nemotron_status(True)
         return format_baseline_summary(strip_trailing_questions(cleaned))
     except Exception as exc:
+        record_nemotron_status(False)
         return format_nemotron_error(str(exc), "baseline summary")
 
 
@@ -994,7 +1011,7 @@ Actions:
 Warnings:
 - ...
 
-Avoid template placeholders like $debt, $savings, {brackets}, or variables. Use real numbers only.
+Avoid template placeholders like $debt, $savings, {{brackets}}, or variables. Use real numbers only.
 If you estimate a range, write it clearly (e.g., "$3,500 to $4,000").
 Do not write equations inline (e.g., "~$3,500 6 = $21,000"). Spell out the result instead.
 
@@ -1142,7 +1159,9 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     try:
         summary = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+        record_nemotron_status(True)
     except Exception as exc:
+        record_nemotron_status(False)
         summary = format_nemotron_error(str(exc), "scenario analysis")
 
     return {
@@ -1271,8 +1290,16 @@ def init_state() -> None:
         st.session_state.active_view = "Landing"
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
+    if "quick_prompt_used" not in st.session_state:
+        st.session_state.quick_prompt_used = False
+    if "quick_prompt_text" not in st.session_state:
+        st.session_state.quick_prompt_text = ""
     if "result" not in st.session_state:
         st.session_state.result = None
+    if "nemotron_last_ok" not in st.session_state:
+        st.session_state.nemotron_last_ok = None
+    if "nemotron_last_checked" not in st.session_state:
+        st.session_state.nemotron_last_checked = 0.0
     if "baseline_summary" not in st.session_state:
         st.session_state.baseline_summary = None
     if "baseline_profile_sig" not in st.session_state:
@@ -1439,10 +1466,10 @@ def render_landing() -> None:
         """
         <div class="hero fade-in">
           <span class="badge">Nemotron-3-Nano Powered</span>
-          <div class="hero-title">RiseArc Financial Guardian</div>
+          <div class="hero-title">RiseArc Financial Assistant</div>
           <div class="hero-subtitle">
-            A proactive financial intelligence layer that simulates risk, surfaces savings, and delivers
-            clear actions. Built for speed, clarity, and real-world decisions.
+            A focused financial analysis app that simulates scenarios, summarizes risk, and delivers
+            clear, human guidance. Built for clarity and real-world decisions.
           </div>
         </div>
         """,
@@ -1450,30 +1477,11 @@ def render_landing() -> None:
     )
 
     st.markdown("\n")
-    stats = st.columns(3)
-    stat_cards = [
-        ("60s", "Risk scan turnaround"),
-        ("24/7", "Guardian monitoring"),
-        ("3x", "Faster scenario planning"),
-    ]
-    for col, (value, label) in zip(stats, stat_cards):
-        with col:
-            st.markdown(
-                f"""
-                <div class="card fade-in">
-                  <div class="card-title">{value}</div>
-                  <div class="card-text">{label}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    st.markdown("\n")
     cols = st.columns(3)
     cards = [
-        ("Survival Simulator", "Stress-test your finances instantly with job-loss and expense-shift scenarios."),
-        ("Guardian Alerts", "Risk signals update based on industry news and profile exposure."),
-        ("Savings Engine", "Identify recurring leaks and quantify immediate monthly savings."),
+        ("Survival Simulator", "Stress-test your finances with job-loss and expense-shift scenarios."),
+        ("Scenario Builder", "Describe a scenario in plain language and review a tailored analysis."),
+        ("Survival Timeline", "See a month-by-month runway and baseline risk summary."),
     ]
     for col, (title, text) in zip(cols, cards):
         with col:
@@ -1936,10 +1944,13 @@ def render_survival_timeline() -> None:
 
 
 def render_chat() -> None:
-    st.subheader("RiseArc Assistant")
-    header_cols = st.columns([3, 1])
+    header_cols = st.columns([4, 1])
     with header_cols[0]:
-        st.caption("Ask questions and get tailored guidance based on your saved profile.")
+        st.markdown("<div class='page-title'>RiseArc Assistant</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='page-subtitle'>Nemotron-powered financial intelligence</div>",
+            unsafe_allow_html=True,
+        )
     with header_cols[1]:
         if st.button("Clear chat"):
             st.session_state.chat_history = []
@@ -1959,7 +1970,7 @@ def render_chat() -> None:
         return
 
     quick_input = None
-    if not st.session_state.chat_history:
+    if not st.session_state.chat_history and not st.session_state.quick_prompt_used:
         st.caption("Try a quick prompt:")
         suggestion_cols = st.columns(3)
         suggestions = [
@@ -1971,9 +1982,15 @@ def render_chat() -> None:
             with col:
                 if st.button(text, use_container_width=True):
                     quick_input = text
+                    st.session_state.quick_prompt_used = True
+                    st.session_state.quick_prompt_text = text
+                    st.rerun()
 
     prompt_text = st.chat_input("Ask RiseArc about your finances")
-    if quick_input:
+    if st.session_state.quick_prompt_text:
+        prompt_text = st.session_state.quick_prompt_text
+        st.session_state.quick_prompt_text = ""
+    elif quick_input:
         prompt_text = quick_input
 
     if prompt_text:
@@ -1990,22 +2007,19 @@ def render_chat() -> None:
         )
         stability_weight_value = job_stability_weight(profile["job_stability"]) if job_stability_weight else 0.0
         context_lines: List[str] = [
-            "You are RiseArc, a financial assistant. Be concise, practical, and grounded in the user's data.",
+            "You are RiseArc, a financial assistant. Be conversational, practical, and grounded in the user's data.",
             "Provide educational guidance, not professional financial advice.",
             "Never provide investment advice or asset recommendations. Avoid buy/sell/hold language.",
-            "Always reply to the user in the same font.",
-            "Always be helpful, polite, and professional",
+            "Always be helpful, polite, and professional.",
             "Always reply to the user in plain human language with no formulas, LaTeX, or code formatting.",
             "Keep answers short unless the user asks for details.",
             "Use a friendly, reassuring tone as a financial guardian.",
             "Explain for non-experts: avoid jargon or define it in plain words.",
             "Sound human and supportive, not robotic or overly formal.",
             "When expressing ranges, use words like '3 to 6' instead of dashes.",
-            "Structure every response with clear signposting:",
-            "Summary: (1-2 short sentences)",
-            "What this means: (2-3 short bullets)",
-            "Next steps: (2-3 short bullets)",
-            "End with one short, relevant follow-up question that offers clarification or the next best step.",
+            "Write like a helpful conversation, not a report.",
+            "You may use short bullet points only if it improves clarity.",
+            "Ask one short, relevant follow-up question when it helps move the conversation forward.",
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
@@ -2034,7 +2048,9 @@ def render_chat() -> None:
             )
             try:
                 response = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+                record_nemotron_status(True)
             except Exception as exc:
+                record_nemotron_status(False)
                 response = format_nemotron_error(str(exc), "chat response")
             typing_placeholder.text(format_readable_text(response))
 
@@ -2051,8 +2067,9 @@ def main() -> None:
     if st.session_state.show_profile_dialog:
         profile_dialog()
 
-    st.markdown(f"<div class='page-title'>{st.session_state.active_view}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='page-subtitle'>Nemotron-powered financial intelligence</div>", unsafe_allow_html=True)
+    if st.session_state.active_view != "Chat":
+        st.markdown(f"<div class='page-title'>{st.session_state.active_view}</div>", unsafe_allow_html=True)
+        st.markdown("<div class='page-subtitle'>Nemotron-powered financial intelligence</div>", unsafe_allow_html=True)
 
     if st.session_state.active_view == "Landing":
         render_landing()
