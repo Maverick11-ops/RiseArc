@@ -27,7 +27,11 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     scenario = payload.scenario
 
     monthly_expenses_cut = profile.expenses_monthly * (1 - scenario.expense_cut_pct / 100.0)
-    monthly_support = scenario.unemployment_benefit_monthly + scenario.other_income_monthly
+    monthly_support = (
+        scenario.unemployment_benefit_monthly
+        + scenario.other_income_monthly
+        + scenario.income_change_monthly
+    )
     monthly_addons = (
         scenario.extra_monthly_expenses
         + scenario.debt_payment_monthly
@@ -37,7 +41,7 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     )
     monthly_net_burn = monthly_expenses_cut + monthly_addons - monthly_support
     one_time_total = scenario.one_time_expense + scenario.relocation_cost
-    starting_balance = profile.savings + scenario.severance - one_time_total
+    starting_balance = profile.savings + scenario.severance + scenario.one_time_income - one_time_total
     if monthly_net_burn <= 0:
         runway_months = 60.0
     else:
@@ -91,12 +95,14 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
             "severance": scenario.severance,
             "unemployment_benefit_monthly": scenario.unemployment_benefit_monthly,
             "other_income_monthly": scenario.other_income_monthly,
+            "income_change_monthly": scenario.income_change_monthly,
             "extra_monthly_expenses": scenario.extra_monthly_expenses,
             "debt_payment_monthly": scenario.debt_payment_monthly,
             "healthcare_monthly": scenario.healthcare_monthly,
             "dependent_care_monthly": scenario.dependent_care_monthly,
             "job_search_monthly": scenario.job_search_monthly,
             "one_time_expense": scenario.one_time_expense,
+            "one_time_income": scenario.one_time_income,
             "relocation_cost": scenario.relocation_cost,
         }
     )

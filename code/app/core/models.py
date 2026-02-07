@@ -19,12 +19,14 @@ class Scenario(BaseModel):
     severance: float = Field(ge=0)
     unemployment_benefit_monthly: float = Field(ge=0, default=0.0)
     other_income_monthly: float = Field(ge=0, default=0.0)
+    income_change_monthly: float = Field(default=0.0)
     extra_monthly_expenses: float = Field(ge=0, default=0.0)
     debt_payment_monthly: float = Field(ge=0, default=0.0)
     healthcare_monthly: float = Field(ge=0, default=0.0)
     dependent_care_monthly: float = Field(ge=0, default=0.0)
     job_search_monthly: float = Field(ge=0, default=0.0)
     one_time_expense: float = Field(ge=0, default=0.0)
+    one_time_income: float = Field(ge=0, default=0.0)
     relocation_cost: float = Field(ge=0, default=0.0)
 
 

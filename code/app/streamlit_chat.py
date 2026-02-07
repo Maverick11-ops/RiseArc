@@ -67,6 +67,7 @@ JOB_STABILITY_OPTIONS = {
     "Unstable": "unstable",
 }
 JOB_STABILITY_LABELS = {value: label for label, value in JOB_STABILITY_OPTIONS.items()}
+BASELINE_SUMMARY_VERSION = "v2-json-structure"
 
 
 def inject_css() -> None:
@@ -101,6 +102,12 @@ html, body, [class*="st-"] {
   background: radial-gradient(circle at 10% 20%, rgba(79, 70, 229, 0.18), transparent 45%),
               radial-gradient(circle at 80% 10%, rgba(14, 165, 233, 0.15), transparent 35%),
               linear-gradient(160deg, var(--bg-1), var(--bg-2));
+}
+
+/* Hide stale UI elements during reruns so previous tab content never shows */
+[data-stale="true"],
+[data-testid="stAppViewContainer"] [data-stale="true"] {
+  display: none !important;
 }
 
 div.block-container {
@@ -411,6 +418,39 @@ div[data-baseweb="input"] {
   line-height: 1.55;
 }
 
+.summary-bottom {
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+
+.summary-section {
+  margin-bottom: 0.8rem;
+}
+
+.summary-section-title {
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.summary-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.summary-list li {
+  margin-bottom: 0.35rem;
+  position: relative;
+  padding-left: 0.9rem;
+}
+
+.summary-list li::before {
+  content: "–";
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+}
+
 .stMarkdown p {
   margin-bottom: 0.8rem;
 }
@@ -595,6 +635,8 @@ def sanitize_llm_output(text: str) -> str:
         cleaned = re.sub(rf"\\b{raw}\\b", replacement, cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
     cleaned = re.sub(r"\b(\d+)\s*%\b", r"\1%", cleaned)
+    cleaned = re.sub(r"\$(\d[\d,]*)\s*%", r"$\1", cleaned)
+    cleaned = re.sub(r"\b([A-Za-z]+)\s*%\b", r"\\1", cleaned)
     def _k_to_dollars(match: re.Match) -> str:
         amount = float(match.group(1))
         return f"${amount * 1000:,.0f}"
@@ -606,9 +648,18 @@ def sanitize_llm_output(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\$(savings|debt|income|expenses|cash|balance|runway)\b", r"\1", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\$(cash flow|cashflow|savings|debt|income|expenses|cash|balance|runway|reserve|buffer)\b",
+        r"\1",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = re.sub(r"\$([A-Za-z_]+)\b", r"\1", cleaned)
+    cleaned = re.sub(r"\$(?!\d)([A-Za-z]+(?:\s+[A-Za-z]+)*)", r"\1", cleaned)
+    cleaned = re.sub(r"\bcash flow month\b", "cash flow per month", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\b~\s*\$(\d[\d,]*)\s*(\d+)\s*=\s*\$?(\d[\d,]*)\b", r"$\1 x \2 = $\3", cleaned)
+    cleaned = re.sub(r"\$(\d[\d,]*)\s*-\s*\$(\d[\d,]*)", r"$\1 to $\2", cleaned)
+    cleaned = re.sub(r"\$(\d[\d,]*)\s+(\d{1,3})\s+\$(\d[\d,]*)", r"$\1 x \2 = $\3", cleaned)
     money_keywords = r"(cash flow|savings|debt|expenses|income|surplus|deficit|payment|payments|balance|budget|costs?|spend|spending|buffer|reserve)"
     def _prefix_dollar(match: re.Match) -> str:
         return f"{match.group(1)}${match.group(2)}"
@@ -645,19 +696,32 @@ def strip_trailing_questions(text: str) -> str:
 def format_baseline_summary(text: str) -> str:
     if not text:
         return ""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = re.sub(r"\s*(Summary|Actions|Warnings)\s*:\s*", r"\n\1:\n", text, flags=re.IGNORECASE)
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
     sections: Dict[str, List[str]] = {"Summary": [], "Actions": [], "Warnings": []}
     current = ""
     for line in lines:
-        header_match = re.match(r"^(summary|actions|warnings)\s*:\s*$", line, flags=re.IGNORECASE)
+        header_match = re.match(r"^(summary|actions|warnings)\s*:?\s*$", line, flags=re.IGNORECASE)
         if header_match:
             current = header_match.group(1).capitalize()
             continue
-        bullet_match = re.match(r"^[-•]\s*(.+)", line)
+        bullet_match = re.match(r"^[-•]\s*(.*)", line)
         if bullet_match and current:
-            sections[current].append(bullet_match.group(1).strip())
+            bullet_text = bullet_match.group(1).strip()
+            if bullet_text:
+                sections[current].append(bullet_text)
             continue
-        if current:
+        inline_bullets = re.split(r"\s+-\s+", line)
+        if current and len(inline_bullets) > 1:
+            for chunk in inline_bullets:
+                chunk = chunk.strip()
+                if chunk and chunk not in {"-", "•"}:
+                    sections[current].append(chunk)
+            continue
+        if current and line in {"-", "•"}:
+            continue
+        if current and line:
             sections[current].append(line)
 
     def _clean_bullet(text_line: str) -> str:
@@ -672,7 +736,7 @@ def format_baseline_summary(text: str) -> str:
     output_lines: List[str] = []
     first_section = True
     for header in ["Summary", "Actions", "Warnings"]:
-        bullets = [_clean_bullet(item) for item in sections[header] if item.strip()]
+        bullets = [_clean_bullet(item) for item in sections[header] if item.strip()][:3]
         if not bullets:
             continue
         if not first_section:
@@ -698,6 +762,186 @@ def tidy_summary_spacing(text: str) -> str:
                 cleaned_lines.append("")
         cleaned_lines.append(stripped)
     return "\n".join(cleaned_lines).strip()
+
+
+def parse_summary_sections(text: str) -> Dict[str, Any]:
+    if not text:
+        return {"bottom_line": "", "sections": {}}
+    text = re.sub(
+        r"(Bottom line:\s*[^\n]+?)\s+(Summary|Actions|Warnings)\s*:",
+        r"\1\n\2:",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s*(Summary|Actions|Warnings)\s*:\s*", r"\n\1:\n", text, flags=re.IGNORECASE)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    sections: Dict[str, List[str]] = {"Summary": [], "Actions": [], "Warnings": []}
+    bottom_line = ""
+    current = ""
+    for line in lines:
+        bottom_match = re.match(r"^bottom line:\s*(.+)$", line, flags=re.IGNORECASE)
+        if bottom_match:
+            bottom_line = bottom_match.group(1).strip()
+            continue
+        header_match = re.match(r"^(summary|actions|warnings)\s*:?\s*$", line, flags=re.IGNORECASE)
+        if header_match:
+            current = header_match.group(1).capitalize()
+            continue
+        bullet_match = re.match(r"^[-•*]\s*(.*)", line)
+        if bullet_match and current:
+            bullet_text = bullet_match.group(1).strip()
+            if bullet_text:
+                sections[current].append(bullet_text)
+            continue
+        if current:
+            parts = [p.strip() for p in re.split(r"\s+[•\-–]\s+", line) if p.strip()]
+            if len(parts) > 1:
+                sections[current].extend(parts)
+                continue
+            if line.count(".") >= 1 and not sections[current]:
+                sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
+                if len(sentences) > 1:
+                    sections[current].extend(sentences)
+                    continue
+            sections[current].append(line)
+
+    def _clean_bullet(text_line: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text_line).strip()
+        cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
+        if cleaned and cleaned[0].isalpha():
+            cleaned = cleaned[0].upper() + cleaned[1:]
+        if cleaned and cleaned[-1] not in ".!?":
+            cleaned += "."
+        return cleaned
+
+    for key in list(sections.keys()):
+        sections[key] = [_clean_bullet(item) for item in sections[key] if item.strip()][:3]
+
+    return {"bottom_line": bottom_line, "sections": sections}
+
+
+def render_summary_html(summary_text: str) -> str:
+    parsed = parse_summary_sections(summary_text)
+    bottom_line = parsed["bottom_line"]
+    sections: Dict[str, List[str]] = parsed["sections"]
+
+    parts: List[str] = []
+    for header in ["Summary", "Actions", "Warnings"]:
+        bullets = sections.get(header, [])
+        if not bullets:
+            continue
+        items = "".join([f"<li>{html.escape(b)}</li>" for b in bullets])
+        parts.append(
+            f"<div class='summary-section'>"
+            f"<div class='summary-section-title'>{header}</div>"
+            f"<ul class='summary-list'>{items}</ul>"
+            f"</div>"
+        )
+    if bottom_line:
+        parts.append(f"<div class='summary-bottom'>Bottom line: {html.escape(bottom_line)}</div>")
+    if not parts:
+        return f"<div class='summary-text'>{html.escape(summary_text)}</div>"
+    return "".join(parts)
+
+
+def repair_summary_placeholders(
+    text: str,
+    profile: Dict[str, Any],
+    scenario: Dict[str, Any],
+    metrics: Dict[str, float],
+) -> str:
+    if not text:
+        return ""
+
+    def money(value: float) -> str:
+        return f"${value:,.0f}"
+
+    income = float(profile.get("income_monthly", 0.0))
+    expenses = float(profile.get("expenses_monthly", 0.0))
+    savings = float(profile.get("savings", 0.0))
+    debt = float(profile.get("debt", 0.0))
+    baseline_cash_flow = income - expenses
+    net_burn = metrics.get("monthly_net_burn")
+    net_flow = -float(net_burn) if net_burn is not None else baseline_cash_flow
+
+    def money_signed(value: float) -> str:
+        sign = "-" if value < 0 else ""
+        return f"{sign}${abs(value):,.0f}"
+
+    replacements = {
+        r"\$income\b": money(income),
+        r"\$expenses\b": money(expenses),
+        r"\$savings\b": money(savings),
+        r"\$debt\b": money(debt),
+        r"\$buffer\b": money(savings),
+        r"\$reserve\b": money(savings),
+    }
+    for pattern, value in replacements.items():
+        text = re.sub(pattern, value, text, flags=re.IGNORECASE)
+
+    text = re.sub(
+        r"\$(cash flow|cashflow)(\s+per\s+month|\s+month)?\b",
+        money_signed(net_flow),
+        text,
+        flags=re.IGNORECASE,
+    )
+    if metrics.get("runway_months") is not None:
+        text = re.sub(
+            r"\$runway\b",
+            f"{metrics.get('runway_months', 0.0):.1f} months",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    if scenario.get("expense_cut_pct") is not None:
+        text = re.sub(
+            r"\bexpenses?\s*%\b",
+            f"{float(scenario.get('expense_cut_pct', 0.0)):.0f}%",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    if metrics.get("debt_ratio") is not None:
+        text = re.sub(
+            r"\bdebt ratio is\s+debt\b",
+            f"debt ratio is {metrics.get('debt_ratio', 0.0):.2f}",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\bdebt ratio is\s+\$[\d,]+(?:\.\d+)?\b",
+            f"debt ratio is {metrics.get('debt_ratio', 0.0):.2f}",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
+def enforce_runway_value(text: str, runway_months: float) -> str:
+    if not text:
+        return ""
+    target = f"{runway_months:.1f}"
+    text = re.sub(
+        r"(runway[^\\d]{0,24})(\\d+(?:\\.\\d+)?)",
+        lambda m: f"{m.group(1)}{target}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(\\d+(?:\\.\\d+)?)(\\s+months?\\s+of\\s+runway)",
+        lambda m: f"{target}{m.group(2)}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
+
+
+def remove_runway_mentions_if_positive(text: str, monthly_net: float) -> str:
+    if not text or monthly_net <= 0:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if "runway" not in s.lower()]
+    return " ".join(kept).strip()
 
 
 def format_nemotron_error(message: str, context: str) -> str:
@@ -774,6 +1018,9 @@ def regex_extract_scenario(text: str) -> Dict[str, Any]:
     lowered = text.lower()
     data: Dict[str, Any] = {}
 
+    def _amount_to_float(value: str) -> float:
+        return float(value.replace(",", ""))
+
     months_match = re.search(r"(\d+(?:\.\d+)?)\s*(months|month|mos|mo)", lowered)
     if months_match:
         data["months_unemployed"] = int(float(months_match.group(1)))
@@ -792,7 +1039,40 @@ def regex_extract_scenario(text: str) -> Dict[str, Any]:
 
     other_income_match = re.search(r"(side income|freelance|other income)[^\d]*\$?([\d,]+)", lowered)
     if other_income_match:
-        data["other_income_monthly"] = float(other_income_match.group(2).replace(",", ""))
+        data["other_income_monthly"] = _amount_to_float(other_income_match.group(2))
+
+    windfall_match = re.search(
+        r"(lottery|windfall|bonus|inheritance|settlement|award|prize|jackpot)[^\d]*\$?([\d,]+)",
+        lowered,
+    )
+    if windfall_match:
+        data["one_time_income"] = _amount_to_float(windfall_match.group(2))
+
+    raise_match = re.search(
+        r"(raise|promotion|salary increase|pay increase|pay bump)[^\d]*\$?([\d,]+)(?:\\s*(per|/)?\\s*(year|yr|annual|month|mo))?",
+        lowered,
+    )
+    if raise_match:
+        amount = _amount_to_float(raise_match.group(2))
+        period = (raise_match.group(4) or "").strip()
+        if period in {"year", "yr", "annual"}:
+            amount = amount / 12.0
+        data["income_change_monthly"] = amount
+
+    cut_match = re.search(
+        r"(pay cut|salary cut|income cut|pay reduction|salary reduction)[^\d]*\$?([\d,]+)(?:\\s*(per|/)?\\s*(year|yr|annual|month|mo))?",
+        lowered,
+    )
+    if cut_match:
+        amount = _amount_to_float(cut_match.group(2))
+        period = (cut_match.group(4) or "").strip()
+        if period in {"year", "yr", "annual"}:
+            amount = amount / 12.0
+        data["income_change_monthly"] = -amount
+
+    theft_match = re.search(r"(robbed|stolen|theft|scammed|fraud)[^\d]*\$?([\d,]+)", lowered)
+    if theft_match:
+        data["one_time_expense"] = _amount_to_float(theft_match.group(2))
 
     return data
 
@@ -804,17 +1084,19 @@ def extract_scenario_from_text(user_text: str, use_model: bool = False) -> Dict[
         return regex_extract_scenario(user_text)
 
     schema = {
-        "months_unemployed": "int (1-36)",
+        "months_unemployed": "int (0-36)",
         "expense_cut_pct": "float (0-70)",
         "severance": "float",
         "unemployment_benefit_monthly": "float",
         "other_income_monthly": "float",
+        "income_change_monthly": "float (can be negative)",
         "extra_monthly_expenses": "float",
         "debt_payment_monthly": "float",
         "healthcare_monthly": "float",
         "dependent_care_monthly": "float",
         "job_search_monthly": "float",
         "one_time_expense": "float",
+        "one_time_income": "float",
         "relocation_cost": "float",
     }
 
@@ -855,12 +1137,14 @@ def apply_scenario_update(parsed: Dict[str, Any]) -> Dict[str, float]:
         "severance": (0.0, 200000.0),
         "unemployment_benefit_monthly": (0.0, 50000.0),
         "other_income_monthly": (0.0, 50000.0),
+        "income_change_monthly": (-50000.0, 50000.0),
         "extra_monthly_expenses": (0.0, 50000.0),
         "debt_payment_monthly": (0.0, 50000.0),
         "healthcare_monthly": (0.0, 50000.0),
         "dependent_care_monthly": (0.0, 50000.0),
         "job_search_monthly": (0.0, 50000.0),
         "one_time_expense": (0.0, 500000.0),
+        "one_time_income": (0.0, 500000.0),
         "relocation_cost": (0.0, 500000.0),
     }
 
@@ -882,12 +1166,14 @@ def apply_scenario_update(parsed: Dict[str, Any]) -> Dict[str, float]:
         "severance": "severance",
         "unemployment_benefit_monthly": "unemployment_benefit_monthly",
         "other_income_monthly": "other_income_monthly",
+        "income_change_monthly": "income_change_monthly",
         "extra_monthly_expenses": "extra_monthly_expenses",
         "debt_payment_monthly": "debt_payment_monthly",
         "healthcare_monthly": "healthcare_monthly",
         "dependent_care_monthly": "dependent_care_monthly",
         "job_search_monthly": "job_search_monthly",
         "one_time_expense": "one_time_expense",
+        "one_time_income": "one_time_income",
         "relocation_cost": "relocation_cost",
     }
     for key, state_key in state_map.items():
@@ -899,7 +1185,7 @@ def apply_scenario_update(parsed: Dict[str, Any]) -> Dict[str, float]:
 
 def profile_signature(profile: Dict[str, Any]) -> str:
     try:
-        return json.dumps(profile, sort_keys=True)
+        return json.dumps({"profile": profile, "baseline_version": BASELINE_SUMMARY_VERSION}, sort_keys=True)
     except Exception:
         return str(profile)
 
@@ -931,15 +1217,15 @@ def generate_baseline_summary(
         "You are RiseArc. Summarize the user's current financial health in plain language. "
         "No formulas, LaTeX, or code. Do not provide investment advice, stock picks, or buy/sell guidance. "
         "Use words like '3 to 6' for ranges (avoid dashes). "
-        "Make this as detailed as a scenario analysis: reference cash flow, runway, debt vs savings, and risk. "
+        "Make this as detailed as a scenario analysis: reference cash flow, debt vs savings, and risk. "
+        "If cash flow is positive, do not mention runway; focus on surplus and savings growth instead. "
         "Use consistent units (do not compare years to a 3 to 6 month range). "
         "Only use '3 to 6 months' when describing an emergency fund target.\n"
         "Write complete sentences with correct grammar and punctuation. "
-        "Return in this format with EXACTLY three bullets per section and no extra text. "
-        "End after Warnings (no follow-up question).\n"
-        "Summary:\n- ...\n- ...\n- ...\n"
-        "Actions:\n- ...\n- ...\n- ...\n"
-        "Warnings:\n- ...\n- ...\n- ...\n\n"
+        "Return ONLY valid JSON with these keys: bottom_line, summary, actions, warnings. "
+        "Each of summary/actions/warnings must be a list of 3 concise but informative strings "
+        "(aim 12 to 24 words each, 1 to 2 sentences max). "
+        "bottom_line is one short sentence. No extra text.\n\n"
         f"Profile: income {money(profile.get('income_monthly', 0))}, expenses {money(profile.get('expenses_monthly', 0))}, "
         f"savings {money(profile.get('savings', 0))}, debt {money(profile.get('debt', 0))}, "
         f"industry {profile.get('industry', 'Other')}, stability {profile.get('job_stability', 'stable')}.\n"
@@ -947,8 +1233,37 @@ def generate_baseline_summary(
         f"debt ratio {debt_ratio:.2f}, risk score {risk_score:.0f}."
     )
     try:
-        cleaned = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+        raw = extract_text(query_nemotron(prompt))
         record_nemotron_status(True)
+        parsed = safe_json_from_text(raw)
+        if parsed:
+            def _as_list(key: str) -> List[str]:
+                value = parsed.get(key, [])
+                if isinstance(value, str):
+                    value = [value]
+                if not isinstance(value, list):
+                    return []
+                items = [sanitize_llm_output(str(item)) for item in value if str(item).strip()]
+                return items[:3]
+
+            bottom_line = sanitize_llm_output(str(parsed.get("bottom_line", "")).strip())
+            summary_items = _as_list("summary")
+            action_items = _as_list("actions")
+            warning_items = _as_list("warnings")
+
+            lines: List[str] = []
+            if bottom_line:
+                lines.append(f"Bottom line: {bottom_line}")
+            for header, items in [("Summary", summary_items), ("Actions", action_items), ("Warnings", warning_items)]:
+                if not items:
+                    continue
+                lines.append(f"{header}:")
+                for item in items:
+                    lines.append(f"- {item}")
+            built = "\n".join(lines).strip()
+            return strip_trailing_questions(built) if built else ""
+
+        cleaned = sanitize_llm_output(raw)
         return format_baseline_summary(strip_trailing_questions(cleaned))
     except Exception as exc:
         record_nemotron_status(False)
@@ -1014,6 +1329,8 @@ Generate a concise, practical summary based on the user's profile and scenario.
 Do NOT provide investment advice, stock picks, buy/sell/hold guidance, or promises of returns.
 Avoid language that sounds like a recommendation to invest. Focus on cash flow, runway, and risk reduction.
 If asked about investing, redirect to budgeting, debt, and emergency savings fundamentals.
+Use the Computed Metrics exactly as provided. Do not recompute or invent new values.
+If you mention runway, use the exact runway value from Computed Metrics.
 
 Return in this format:
 Summary:
@@ -1027,7 +1344,7 @@ Actions:
 Warnings:
 - ...
 
-Avoid template placeholders like $debt, $savings, {{brackets}}, or variables. Use real numbers only.
+Avoid template placeholders like $debt, $savings, $income, expenses%, or {{brackets}}. Use real numbers only.
 If you estimate a range, write it clearly (e.g., "$3,500 to $4,000").
 Do not write equations inline (e.g., "~$3,500 6 = $21,000"). Spell out the result instead.
 
@@ -1046,6 +1363,7 @@ Scenario:
 - Severance: {money(scenario['severance'])}
 - Unemployment benefit (monthly): {money(scenario.get('unemployment_benefit_monthly', 0.0))}
 - Other income (monthly): {money(scenario.get('other_income_monthly', 0.0))}
+- Income change (monthly): {money(scenario.get('income_change_monthly', 0.0))}
 - Debt payments (monthly): {money(scenario.get('debt_payment_monthly', 0.0))}
 - Healthcare / insurance (monthly): {money(scenario.get('healthcare_monthly', 0.0))}
 - Dependent care (monthly): {money(scenario.get('dependent_care_monthly', 0.0))}
@@ -1053,6 +1371,7 @@ Scenario:
 - Other monthly expenses: {money(scenario.get('extra_monthly_expenses', 0.0))}
 - Total monthly add-ons: {money(monthly_addons_total)}
 - One-time expense: {money(scenario.get('one_time_expense', 0.0))}
+- One-time income (windfall): {money(scenario.get('one_time_income', 0.0))}
 - Relocation / legal (one-time): {money(scenario.get('relocation_cost', 0.0))}
 - Total one-time costs: {money(one_time_total)}
 
@@ -1101,8 +1420,10 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     scenario = payload["scenario"]
 
     monthly_expenses_cut = profile["expenses_monthly"] * (1 - scenario["expense_cut_pct"] / 100.0)
-    monthly_support = scenario.get("unemployment_benefit_monthly", 0.0) + scenario.get(
-        "other_income_monthly", 0.0
+    monthly_support = (
+        scenario.get("unemployment_benefit_monthly", 0.0)
+        + scenario.get("other_income_monthly", 0.0)
+        + scenario.get("income_change_monthly", 0.0)
     )
     monthly_addons = (
         scenario.get("extra_monthly_expenses", 0.0)
@@ -1113,7 +1434,12 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     monthly_net_burn = monthly_expenses_cut + monthly_addons - monthly_support
     one_time_total = scenario.get("one_time_expense", 0.0) + scenario.get("relocation_cost", 0.0)
-    starting_balance = profile["savings"] + scenario.get("severance", 0.0) - one_time_total
+    starting_balance = (
+        profile["savings"]
+        + scenario.get("severance", 0.0)
+        + scenario.get("one_time_income", 0.0)
+        - one_time_total
+    )
     if monthly_net_burn <= 0:
         runway_months = 60.0
     else:
@@ -1174,11 +1500,15 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         payload.get("scenario_note", ""),
     )
     try:
-        summary = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+        raw_summary = extract_text(query_nemotron(prompt))
         record_nemotron_status(True)
     except Exception as exc:
         record_nemotron_status(False)
         summary = format_nemotron_error(str(exc), "scenario analysis")
+    else:
+        raw_summary = repair_summary_placeholders(raw_summary, llm_profile, llm_scenario, llm_metrics)
+        summary = sanitize_llm_output(raw_summary)
+        summary = enforce_runway_value(summary, metrics.get("runway_months", 0.0))
 
     return {
         "metrics": metrics,
@@ -1252,6 +1582,9 @@ def apply_demo_profile() -> None:
         st.session_state["months_unemployed"] = scenario.get("months_unemployed", 6)
         st.session_state["expense_cut"] = scenario.get("expense_cut_pct", 15)
         st.session_state["severance"] = scenario.get("severance", 3000.0)
+        st.session_state["other_income_monthly"] = scenario.get("other_income_monthly", 0.0)
+        st.session_state["income_change_monthly"] = scenario.get("income_change_monthly", 0.0)
+        st.session_state["one_time_income"] = scenario.get("one_time_income", 0.0)
     if SAMPLE_REQUEST.get("news_event"):
         st.session_state["news_event"] = "Tech layoff wave"
     for item in SAMPLE_REQUEST.get("subscriptions", []):
@@ -1271,6 +1604,8 @@ def render_sidebar() -> None:
             button_type = "primary" if is_active else "secondary"
             if st.button(option, use_container_width=True, type=button_type):
                 st.session_state.active_view = option
+                st.session_state.view_switching = True
+                st.rerun()
 
         st.markdown("---")
         if st.button("Edit profile", use_container_width=True):
@@ -1312,6 +1647,8 @@ def init_state() -> None:
         st.session_state.quick_prompt_text = ""
     if "result" not in st.session_state:
         st.session_state.result = None
+    if "view_switching" not in st.session_state:
+        st.session_state.view_switching = False
     if "nemotron_last_ok" not in st.session_state:
         st.session_state.nemotron_last_ok = None
     if "nemotron_last_checked" not in st.session_state:
@@ -1330,6 +1667,8 @@ def init_state() -> None:
         st.session_state.unemployment_benefit_monthly = 0.0
     if "other_income_monthly" not in st.session_state:
         st.session_state.other_income_monthly = 0.0
+    if "income_change_monthly" not in st.session_state:
+        st.session_state.income_change_monthly = 0.0
     if "extra_monthly_expenses" not in st.session_state:
         st.session_state.extra_monthly_expenses = 0.0
     if "debt_payment_monthly" not in st.session_state:
@@ -1342,6 +1681,8 @@ def init_state() -> None:
         st.session_state.job_search_monthly = 0.0
     if "one_time_expense" not in st.session_state:
         st.session_state.one_time_expense = 0.0
+    if "one_time_income" not in st.session_state:
+        st.session_state.one_time_income = 0.0
     if "relocation_cost" not in st.session_state:
         st.session_state.relocation_cost = 0.0
 
@@ -1466,6 +1807,17 @@ def parse_optional_float(raw: str, fallback: float, label: str) -> float | None:
     return max(value, 0.0)
 
 
+def parse_optional_float_signed(raw: str, fallback: float, label: str) -> float | None:
+    if raw is None or raw.strip() == "":
+        return fallback
+    try:
+        value = float(normalize_numeric_text(raw))
+    except ValueError:
+        st.error(f"Please enter a valid number for {label}.")
+        return None
+    return max(min(value, 50000.0), -50000.0)
+
+
 def parse_optional_int(raw: str, fallback: int, label: str) -> int | None:
     if raw is None or raw.strip() == "":
         return fallback
@@ -1555,12 +1907,14 @@ def build_payload_from_state(
     severance: float,
     unemployment_benefit_monthly: float,
     other_income_monthly: float,
+    income_change_monthly: float,
     extra_monthly_expenses: float,
     debt_payment_monthly: float,
     healthcare_monthly: float,
     dependent_care_monthly: float,
     job_search_monthly: float,
     one_time_expense: float,
+    one_time_income: float,
     relocation_cost: float,
     subscriptions: Dict[str, float],
     news_event: Dict[str, Any],
@@ -1574,12 +1928,14 @@ def build_payload_from_state(
             "severance": severance,
             "unemployment_benefit_monthly": unemployment_benefit_monthly,
             "other_income_monthly": other_income_monthly,
+            "income_change_monthly": income_change_monthly,
             "extra_monthly_expenses": extra_monthly_expenses,
             "debt_payment_monthly": debt_payment_monthly,
             "healthcare_monthly": healthcare_monthly,
             "dependent_care_monthly": dependent_care_monthly,
             "job_search_monthly": job_search_monthly,
             "one_time_expense": one_time_expense,
+            "one_time_income": one_time_income,
             "relocation_cost": relocation_cost,
         },
         "subscriptions": [
@@ -1624,12 +1980,18 @@ def render_scenario_builder() -> None:
                 summary_bits.append(f"{applied_preview['expense_cut_pct']:.0f}% expense cut")
             if "severance" in applied_preview:
                 summary_bits.append(f"severance {format_currency(applied_preview['severance'])}")
+            if "one_time_income" in applied_preview:
+                summary_bits.append(f"windfall {format_currency(applied_preview['one_time_income'])}")
             if "unemployment_benefit_monthly" in applied_preview:
                 summary_bits.append(
                     f"benefits {format_currency(applied_preview['unemployment_benefit_monthly'])}/mo"
                 )
             if "other_income_monthly" in applied_preview:
                 summary_bits.append(f"other income {format_currency(applied_preview['other_income_monthly'])}/mo")
+            if "income_change_monthly" in applied_preview:
+                summary_bits.append(
+                    f"income change {format_currency(applied_preview['income_change_monthly'])}/mo"
+                )
             if "extra_monthly_expenses" in applied_preview:
                 summary_bits.append(f"extra expenses {format_currency(applied_preview['extra_monthly_expenses'])}/mo")
             if "one_time_expense" in applied_preview:
@@ -1664,6 +2026,13 @@ def render_scenario_builder() -> None:
             placeholder="e.g. 3000",
             label_visibility="collapsed",
         )
+        st.markdown('<div class="field-label">One-time income (windfall)</div>', unsafe_allow_html=True)
+        one_time_income_raw = st.text_input(
+            "",
+            key="one_time_income_raw",
+            placeholder="e.g. 100000",
+            label_visibility="collapsed",
+        )
         st.markdown('<div class="field-label">Unemployment benefits (monthly)</div>', unsafe_allow_html=True)
         unemployment_raw = st.text_input(
             "",
@@ -1676,6 +2045,13 @@ def render_scenario_builder() -> None:
             "",
             key="other_income_raw",
             placeholder="e.g. 200",
+            label_visibility="collapsed",
+        )
+        st.markdown('<div class="field-label">Income change (monthly)</div>', unsafe_allow_html=True)
+        income_change_raw = st.text_input(
+            "",
+            key="income_change_raw",
+            placeholder="e.g. 500 or -500",
             label_visibility="collapsed",
         )
     with right:
@@ -1740,11 +2116,17 @@ def render_scenario_builder() -> None:
     severance = parse_optional_float(
         severance_raw, st.session_state.get("severance", 0.0), "Severance / payout"
     )
+    one_time_income = parse_optional_float(
+        one_time_income_raw, st.session_state.get("one_time_income", 0.0), "One-time income"
+    )
     unemployment_benefit_monthly = parse_optional_float(
         unemployment_raw, st.session_state.get("unemployment_benefit_monthly", 0.0), "Unemployment benefits"
     )
     other_income_monthly = parse_optional_float(
         other_income_raw, st.session_state.get("other_income_monthly", 0.0), "Other income"
+    )
+    income_change_monthly = parse_optional_float_signed(
+        income_change_raw, st.session_state.get("income_change_monthly", 0.0), "Income change"
     )
     debt_payment_monthly = parse_optional_float(
         debt_payment_raw, st.session_state.get("debt_payment_monthly", 0.0), "Debt payments"
@@ -1772,8 +2154,10 @@ def render_scenario_builder() -> None:
         months_unemployed,
         expense_cut_pct,
         severance,
+        one_time_income,
         unemployment_benefit_monthly,
         other_income_monthly,
+        income_change_monthly,
         debt_payment_monthly,
         healthcare_monthly,
         dependent_care_monthly,
@@ -1787,8 +2171,10 @@ def render_scenario_builder() -> None:
     st.session_state.months_unemployed = months_unemployed
     st.session_state.expense_cut = expense_cut_pct
     st.session_state.severance = severance
+    st.session_state.one_time_income = one_time_income
     st.session_state.unemployment_benefit_monthly = unemployment_benefit_monthly
     st.session_state.other_income_monthly = other_income_monthly
+    st.session_state.income_change_monthly = income_change_monthly
     st.session_state.debt_payment_monthly = debt_payment_monthly
     st.session_state.healthcare_monthly = healthcare_monthly
     st.session_state.dependent_care_monthly = dependent_care_monthly
@@ -1797,7 +2183,7 @@ def render_scenario_builder() -> None:
     st.session_state.one_time_expense = one_time_expense
     st.session_state.relocation_cost = relocation_cost
 
-    monthly_support = unemployment_benefit_monthly + other_income_monthly
+    monthly_support = unemployment_benefit_monthly + other_income_monthly + income_change_monthly
     monthly_addons = (
         debt_payment_monthly
         + healthcare_monthly
@@ -1819,8 +2205,10 @@ def render_scenario_builder() -> None:
             months_unemployed=int(months_unemployed),
             expense_cut_pct=float(expense_cut_pct),
             severance=severance,
+            one_time_income=one_time_income,
             unemployment_benefit_monthly=unemployment_benefit_monthly,
             other_income_monthly=other_income_monthly,
+            income_change_monthly=income_change_monthly,
             extra_monthly_expenses=extra_monthly_expenses,
             debt_payment_monthly=debt_payment_monthly,
             healthcare_monthly=healthcare_monthly,
@@ -1910,6 +2298,7 @@ def render_survival_timeline() -> None:
         "risk_score": risk_score,
         "adjusted_risk_score": risk_score,
         "debt_ratio": debt_ratio,
+        "monthly_net_burn": expenses - income,
     }
     risk_drivers = build_risk_drivers(profile, metrics)
 
@@ -1948,14 +2337,14 @@ def render_survival_timeline() -> None:
 
     st.subheader("Nemotron Summary")
     summary_text = ensure_baseline_summary(profile, monthly_net, runway_months)
-    summary_text = tidy_summary_spacing(summary_text)
+    summary_text = repair_summary_placeholders(summary_text, profile, {}, metrics)
+    summary_text = remove_runway_mentions_if_positive(summary_text, monthly_net)
+    summary_html = render_summary_html(summary_text)
     st.markdown(
-        f"""
-        <div class="summary-block">
-          <div class="summary-title">Baseline Summary</div>
-          <div class="summary-text">{html.escape(summary_text)}</div>
-        </div>
-        """,
+        f"<div class='summary-block'>"
+        f"<div class='summary-title'>Baseline Summary</div>"
+        f"{summary_html}"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -1991,9 +2380,9 @@ def render_chat() -> None:
         st.caption("Try a quick prompt:")
         suggestion_cols = st.columns(3)
         suggestions = [
-            "How long can I last if income drops by 20%?",
-            "What should I prioritize to lower my risk score?",
-            "Can I afford a $500 emergency expense next month?",
+            "What if I lose my job tomorrow?",
+            "What actions should I take right now?",
+            "What's my biggest risk?",
         ]
         for col, text in zip(suggestion_cols, suggestions):
             with col:
@@ -2036,7 +2425,9 @@ def render_chat() -> None:
             "When expressing ranges, use words like '3 to 6' instead of dashes.",
             "Write like a helpful conversation, not a report.",
             "You may use short bullet points only if it improves clarity.",
-            "Ask one short, relevant follow-up question when it helps move the conversation forward.",
+            "End with one memorable verdict sentence beginning with 'Bottom line:'.",
+            "If you use bullets, keep it to 3 or fewer total.",
+            "Ask one short, relevant follow-up question when it helps move the conversation forward, but place it before the Bottom line sentence.",
             (
                 "Profile: income "
                 f"{llm_profile['income_monthly']}, expenses {llm_profile['expenses_monthly']}, "
@@ -2064,8 +2455,10 @@ def render_chat() -> None:
                 unsafe_allow_html=True,
             )
             try:
-                response = sanitize_llm_output(extract_text(query_nemotron(prompt)))
+                raw_response = extract_text(query_nemotron(prompt))
                 record_nemotron_status(True)
+                raw_response = repair_summary_placeholders(raw_response, llm_profile, {}, llm_metrics or {})
+                response = sanitize_llm_output(raw_response)
             except Exception as exc:
                 record_nemotron_status(False)
                 response = format_nemotron_error(str(exc), "chat response")
@@ -2081,21 +2474,30 @@ def main() -> None:
     init_state()
     render_sidebar()
 
-    if st.session_state.show_profile_dialog:
-        profile_dialog()
+    page_root = st.empty()
+    if st.session_state.view_switching:
+        with page_root.container():
+            st.markdown(f"<div class='page-title'>{st.session_state.active_view}</div>", unsafe_allow_html=True)
+            st.markdown("<div class='page-subtitle'>Loading...</div>", unsafe_allow_html=True)
+        st.session_state.view_switching = False
+        st.rerun()
 
-    if st.session_state.active_view != "Chat":
-        st.markdown(f"<div class='page-title'>{st.session_state.active_view}</div>", unsafe_allow_html=True)
-        st.markdown("<div class='page-subtitle'>Nemotron-powered financial intelligence</div>", unsafe_allow_html=True)
+    with page_root.container():
+        if st.session_state.show_profile_dialog:
+            profile_dialog()
 
-    if st.session_state.active_view == "Landing":
-        render_landing()
-    elif st.session_state.active_view == "Scenario Builder":
-        render_scenario_builder()
-    elif st.session_state.active_view == "Survival Timeline":
-        render_survival_timeline()
-    else:
-        render_chat()
+        if st.session_state.active_view != "Chat":
+            st.markdown(f"<div class='page-title'>{st.session_state.active_view}</div>", unsafe_allow_html=True)
+            st.markdown("<div class='page-subtitle'>Nemotron-powered financial intelligence</div>", unsafe_allow_html=True)
+
+        if st.session_state.active_view == "Landing":
+            render_landing()
+        elif st.session_state.active_view == "Scenario Builder":
+            render_scenario_builder()
+        elif st.session_state.active_view == "Survival Timeline":
+            render_survival_timeline()
+        else:
+            render_chat()
 
 
 if __name__ == "__main__":
