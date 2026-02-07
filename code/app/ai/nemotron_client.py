@@ -29,12 +29,18 @@ def check_nemotron_online(timeout: float | None = None) -> bool:
     return False
 
 
-def query_nemotron(prompt: str) -> Dict[str, Any]:
+def query_nemotron(
+    prompt: str,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> Dict[str, Any]:
     payload = {
         "model": NEMOTRON_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
+        "temperature": 0.2 if temperature is None else float(temperature),
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = int(max_tokens)
     resp = requests.post(NEMOTRON_URL, json=payload, timeout=NEMOTRON_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
