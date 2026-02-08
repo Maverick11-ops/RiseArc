@@ -164,15 +164,20 @@ def compute_timeline_stats(timeline: List[float]) -> Dict[str, float]:
 
 
 def clamp_llm_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
+    monthly_expenses_cut = metrics.get("monthly_expenses_cut", metrics.get("monthly_expenses", 0.0))
+    runway_months = metrics.get("runway_months", 0.0)
+    debt_ratio = metrics.get("debt_ratio", 0.0)
+    risk_score = metrics.get("risk_score", 0.0)
+    adjusted_risk = metrics.get("adjusted_risk_score", risk_score)
     return {
-        "monthly_expenses_cut": clamp(metrics["monthly_expenses_cut"], 0.0, LLM_EXPENSES_MAX),
-        "monthly_net_burn": clamp(metrics.get("monthly_net_burn", metrics["monthly_expenses_cut"]), -LLM_EXPENSES_MAX, LLM_EXPENSES_MAX),
+        "monthly_expenses_cut": clamp(monthly_expenses_cut, 0.0, LLM_EXPENSES_MAX),
+        "monthly_net_burn": clamp(metrics.get("monthly_net_burn", monthly_expenses_cut), -LLM_EXPENSES_MAX, LLM_EXPENSES_MAX),
         "monthly_support": clamp(metrics.get("monthly_support", 0.0), 0.0, LLM_OTHER_INCOME_MAX + LLM_BENEFITS_MAX),
         "one_time_expense": clamp(metrics.get("one_time_expense", 0.0), 0.0, LLM_ONE_TIME_MAX),
-        "runway_months": clamp(metrics["runway_months"], 0.0, LLM_RUNWAY_MAX),
-        "debt_ratio": clamp(metrics["debt_ratio"], 0.0, LLM_DEBT_RATIO_MAX),
-        "risk_score": clamp(metrics["risk_score"], LLM_RISK_MIN, LLM_RISK_MAX),
-        "adjusted_risk_score": clamp(metrics["adjusted_risk_score"], LLM_RISK_MIN, LLM_RISK_MAX),
+        "runway_months": clamp(runway_months, 0.0, LLM_RUNWAY_MAX),
+        "debt_ratio": clamp(debt_ratio, 0.0, LLM_DEBT_RATIO_MAX),
+        "risk_score": clamp(risk_score, LLM_RISK_MIN, LLM_RISK_MAX),
+        "adjusted_risk_score": clamp(adjusted_risk, LLM_RISK_MIN, LLM_RISK_MAX),
     }
 
 
@@ -218,4 +223,5 @@ def clamp_llm_scenario(scenario: Dict[str, float]) -> Dict[str, float]:
         "one_time_expense": clamp(scenario.get("one_time_expense", 0.0), 0.0, LLM_ONE_TIME_MAX),
         "one_time_income": clamp(scenario.get("one_time_income", 0.0), 0.0, LLM_ONE_TIME_MAX),
         "relocation_cost": clamp(scenario.get("relocation_cost", 0.0), 0.0, LLM_ONE_TIME_MAX),
+        "baseline_mode": bool(scenario.get("baseline_mode", False)),
     }
