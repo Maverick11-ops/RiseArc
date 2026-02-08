@@ -170,6 +170,7 @@ def clamp_llm_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
     risk_score = metrics.get("risk_score", 0.0)
     adjusted_risk = metrics.get("adjusted_risk_score", risk_score)
     return {
+        "monthly_net": clamp(metrics.get("monthly_net", 0.0), -LLM_EXPENSES_MAX, LLM_EXPENSES_MAX),
         "monthly_expenses_cut": clamp(monthly_expenses_cut, 0.0, LLM_EXPENSES_MAX),
         "monthly_net_burn": clamp(metrics.get("monthly_net_burn", monthly_expenses_cut), -LLM_EXPENSES_MAX, LLM_EXPENSES_MAX),
         "monthly_support": clamp(metrics.get("monthly_support", 0.0), 0.0, LLM_OTHER_INCOME_MAX + LLM_BENEFITS_MAX),
@@ -212,6 +213,8 @@ def clamp_llm_scenario(scenario: Dict[str, float]) -> Dict[str, float]:
         "severance": clamp(scenario["severance"], 0.0, LLM_SEVERANCE_MAX),
         "unemployment_benefit_monthly": clamp(scenario.get("unemployment_benefit_monthly", 0.0), 0.0, LLM_BENEFITS_MAX),
         "other_income_monthly": clamp(scenario.get("other_income_monthly", 0.0), 0.0, LLM_OTHER_INCOME_MAX),
+        "income_start_month": clamp(scenario.get("income_start_month", 0.0), 0.0, LLM_UNEMPLOYED_MONTHS_MAX),
+        "income_start_amount": clamp(scenario.get("income_start_amount", 0.0), 0.0, LLM_OTHER_INCOME_MAX),
         "income_change_monthly": clamp(
             scenario.get("income_change_monthly", 0.0), -LLM_INCOME_CHANGE_MAX, LLM_INCOME_CHANGE_MAX
         ),

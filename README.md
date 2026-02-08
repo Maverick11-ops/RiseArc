@@ -1,6 +1,6 @@
 # RiseArc, The Nemotron-Powered Financial Resilience Guardian
 
-RiseArc is a prototype financial artificial intelligence application powered by NVIDIA Nemotron-3-Nano. It simulates personal financial shock scenarios (such as job loss), computes risk metrics, and converts those results into clear, actionable plan.
+RiseArc is a prototype financial artificial intelligence application powered by NVIDIA Nemotron-3-Nano. It simulates personal financial shock scenarios (such as job loss), computes risk metrics, and converts those results into clear, actionable plans.
 
 RiseArc is *not* just another chatbot. It is a profile-aware financial analysis system designed to help users understand how fragile or resilient their situation is under stress.
 
@@ -8,9 +8,9 @@ RiseArc is *not* just another chatbot. It is a profile-aware financial analysis 
 
 ## Philosophy
 
-As employment risk and financial shocks becomes harder to predict, people need tools that help them reason about financial downside scenarios before they happen.
+As employment risk and financial shocks become harder to predict, people need tools that help them reason about financial downside scenarios before they happen.
 
-RiseArc focuses on **anticipation rather than reaction**; helping users understand how long they can sustain themselves, where their risk comes from, and what actions matter most. Its job is to prepare people so that they can survive through financial shocks and be able to put food on their tables.
+RiseArc focuses on **anticipation rather than reaction**; helping users understand how long they can sustain themselves, where their risk comes from, and what actions they should take. Its job is to prepare people so that they can survive through financial shocks and be able to put food on their tables.
 
 ---
 
@@ -32,12 +32,11 @@ This ensures accuracy and prevents hallucinations from the artificial intelligen
 Generates a month-by-month cash balance timeline that visualizes how savings decline over time under stress.
 
 ### Nemotron-Powered Insights
-NVIDIA Nemotron-3-Nano converts computed metrics into a concise, structured response:
+NVIDIA Nemotron-3-Nano converts computed metrics into concise, structured responses:
 - Summary
 - Recommended Actions
 - Warnings
 
-The model is used for interpretation and explanation, not the math.
 
 ### Nemotron Financial Assistant Chatbot
 A live Nemotron chatbot that assists the user and answers questions using the their profile and latest scenario metrics as context.
@@ -52,21 +51,26 @@ A live Nemotron chatbot that assists the user and answers questions using the th
 3. Nemotron generates a clear, human-readable response.
 4. The UI presents results in a simple, functional interface.
 
-This architecture separates calculation from reasoning to ensure reliability.
 
 ---
 
 ## Architecture
 
-- **Model:** NVIDIA Nemotron-3-Nano (deployed locally on DGX Spark)
+- **Model:** NVIDIA Nemotron-3-Nano
 - **UI:** Streamlit
 - **Core Logic:** Python (tools + orchestration pipeline)
 
 ---
 
+## Try It Now
+
+To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
+
+---
+
 ## Notes
 
-- This project is an early-stage prototype (v0.1) built for demonstration purposes.
+- This project is an early-stage prototype (v0.1), bugs are expected.
 - This project was developed with the assistance of AI tools to accelerate development.
 - UI perfection is not the primary goal in v0.1.
 - Nemotron-3-Nano was deployed using NVIDIA NIM.
