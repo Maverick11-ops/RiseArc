@@ -69,6 +69,7 @@ This architecture separates calculation from reasoning to ensure reliability.
 - This project is an early-stage prototype (v0.1) built for demonstration purposes.
 - This project was developed with the assistance of AI tools to accelerate development.
 - UI perfection is not the primary goal in v0.1.
+- Nemotron-3-Nano was deployed using NVIDIA NIM.
 
 ---
 

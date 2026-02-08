@@ -663,6 +663,7 @@ def sanitize_llm_output(text: str) -> str:
     cleaned = unicodedata.normalize("NFKC", cleaned)
     cleaned = unicodedata.normalize("NFKD", cleaned)
     cleaned = "".join(ch for ch in cleaned if not unicodedata.combining(ch))
+    cleaned = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", cleaned)
     cleaned = cleaned.replace("\u00ad", "")  # soft hyphen
     for hyphen_char in [
         "\u2010",
@@ -744,6 +745,23 @@ def sanitize_llm_output(text: str) -> str:
     cleaned = re.sub(r"\$(\d[\d,]*)\s*-\s*\$(\d[\d,]*)", r"$\1 to $\2", cleaned)
     cleaned = re.sub(r"\$(\d[\d,]*)\s+(\d{1,3})\s+\$(\d[\d,]*)", r"$\1 x \2 = $\3", cleaned)
     cleaned = re.sub(r"\bmonths?_?until_?zero\s*=?\s*\d+(?:\.\d+)?\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("–", "-").replace("—", "-").replace("−", "-")
+    cleaned = re.sub(r"\bmonths?of\b", "months of", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bmonthsof\b", "months of", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(about\s+(\d[\d,]*)\)", r"(about $\1)", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"([A-Za-z])(?=\d)", r"\1 ", cleaned)
+    cleaned = re.sub(r"(\d)(?=[A-Za-z])", r"\1 ", cleaned)
+    cleaned = re.sub(r"([0-9])\(", r"\1 (", cleaned)
+    cleaned = re.sub(r"\)([A-Za-z0-9])", r") \1", cleaned)
+    cleaned = re.sub(r"(income|expenses|savings|debt|cash flow|monthly net)\$", r"\1 $", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r":\s*\.", ".", cleaned)
+    cleaned = re.sub(r"\s*:\s*$", "", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)\s*-\s*risk score\b", r"\1- Risk score", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)\s*-\s*debt ratio\b", r"\1- Debt ratio", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)\s*-\s*debt-to-annual-income ratio\b", r"\1- Debt-to-annual-income ratio", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)risk score\b", r"\1Risk score", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)debt ratio\b", r"\1Debt ratio", cleaned)
+    cleaned = re.sub(r"(?i)(^|\n)debt-to-annual-income ratio\b", r"\1Debt-to-annual-income ratio", cleaned)
     cleaned = re.sub(
         r"\b(?:based on|using) the runway metric\b",
         "based on your savings and current burn rate",
@@ -757,7 +775,7 @@ def sanitize_llm_output(text: str) -> str:
             return f"{prefix}{match.group(2)}"
         return f"{prefix}${match.group(2)}"
     cleaned = re.sub(
-        rf"({money_keywords}[^\d$]{{0,40}})(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)(?!\s*%)\b",
+        rf"({money_keywords}[^\d$]{{0,40}})(\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d+(?:\.\d+)?)(?!\s*%)(?!\s*(?:days?|months?|years?))\b",
         _prefix_dollar,
         cleaned,
         flags=re.IGNORECASE,
@@ -851,7 +869,7 @@ def remove_actively_prefix(text: str) -> str:
         return ""
     cleaned = re.sub(r"(?m)^(-\s*)Actively\s+", r"\1", text)
     cleaned = re.sub(r"(?m)^(\\*\\*?[A-Za-z ]+\\*\\*?:\\s*)Actively\\s+", r"\\1", cleaned)
-    cleaned = re.sub(r"(?:(?<=\\.)|(?<=!)|(?<=\\?))\\s+Actively\\s+", " ", cleaned)
+    cleaned = re.sub(r"([.!?])\\s+Actively\\s+", r"\\1 ", cleaned)
     return cleaned
 
 
@@ -891,6 +909,128 @@ def add_risk_score_explanation(text: str, risk_score: float) -> str:
                 line = f"{line} — {meaning}."
         output.append(line)
     return "\n".join(output)
+
+
+def format_structured_response(text: str, monthly_net: float) -> str:
+    if not text:
+        return ""
+    has_structure = bool(
+        re.search(
+            r"^\s*(Summary|Key Facts|What this means|What to do first|Warnings)\s*:",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    )
+    if not has_structure:
+        return text
+
+    text = remove_runway_mentions_if_positive(text, monthly_net)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    canonical = {
+        "summary": "Summary",
+        "key facts": "Key Facts",
+        "what this means": "What this means",
+        "what to do first": "What to do first",
+        "warnings": "Warnings",
+    }
+    sections: Dict[str, List[str]] = {label: [] for label in canonical.values()}
+    current = ""
+    for line in lines:
+        match = re.match(
+            r"^(Summary|Key Facts|What this means|What to do first|Warnings)\s*:\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            key = canonical.get(match.group(1).lower().strip(), match.group(1).title())
+            current = key
+            rest = match.group(2).strip()
+            if rest:
+                sections.setdefault(current, []).append(rest)
+            continue
+        if current:
+            sections.setdefault(current, []).append(line)
+
+    def _clean_sentence(value: str) -> str:
+        cleaned = re.sub(r"\s+", " ", value).strip()
+        cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
+        cleaned = re.sub(r":\s*$", "", cleaned)
+        cleaned = re.sub(r":\s*\.", ".", cleaned)
+        if cleaned and cleaned[0].isalpha():
+            cleaned = cleaned[0].upper() + cleaned[1:]
+        if cleaned and cleaned[-1] not in ".!?":
+            cleaned += "."
+        return cleaned
+
+    def _split_items(entry: str) -> List[str]:
+        if not entry:
+            return []
+        if entry.count(":") >= 2:
+            chunks = [c.strip() for c in re.split(r"\s*:\s*(?=[A-Za-z])", entry) if c.strip()]
+        else:
+            chunks = [entry]
+        items: List[str] = []
+        for chunk in chunks:
+            parts = [p.strip() for p in re.split(r"\s*[-•]\s+|\s*;\s*", chunk) if p.strip()]
+            items.extend(parts if parts else [chunk])
+        return [i for i in items if i and i != "-"]
+
+    output: List[str] = []
+    if sections.get("Summary"):
+        summary_text = _clean_sentence(" ".join(sections["Summary"]))
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", summary_text) if s.strip()]
+        if len(sentences) > 2:
+            summary_text = " ".join(sentences[:2])
+        output.append("Summary:")
+        output.append(summary_text)
+
+    if sections.get("Key Facts"):
+        if output:
+            output.append("")
+        output.append("Key Facts:")
+        key_items: List[str] = []
+        for entry in sections["Key Facts"]:
+            if entry.startswith("- "):
+                key_items.append(entry[2:].strip())
+            else:
+                key_items.extend(_split_items(entry))
+        for item in key_items:
+            output.append(f"- {_clean_sentence(item)}")
+
+    if sections.get("What this means"):
+        if output:
+            output.append("")
+        meaning_text = _clean_sentence(" ".join(sections["What this means"]))
+        output.append("What this means:")
+        output.append(meaning_text)
+
+    if sections.get("What to do first"):
+        if output:
+            output.append("")
+        output.append("What to do first:")
+        action_items: List[str] = []
+        for entry in sections["What to do first"]:
+            if entry.startswith("- "):
+                action_items.append(entry[2:].strip())
+            else:
+                action_items.extend(_split_items(entry))
+        for item in action_items:
+            output.append(f"- {_clean_sentence(item)}")
+
+    if sections.get("Warnings"):
+        if output:
+            output.append("")
+        output.append("Warnings:")
+        warning_items: List[str] = []
+        for entry in sections["Warnings"]:
+            if entry.startswith("- "):
+                warning_items.append(entry[2:].strip())
+            else:
+                warning_items.extend(_split_items(entry))
+        for item in warning_items:
+            output.append(f"- {_clean_sentence(item)}")
+
+    return "\n".join(output).strip()
 
 
 def normalize_key_fact_labels(text: str) -> str:
@@ -1005,7 +1145,7 @@ def override_key_facts_section(
     profile: Dict[str, Any],
     metrics: Dict[str, float],
 ) -> str:
-    if not text or "Key Facts" not in text:
+    if not text:
         return text
 
     def money(value: float) -> str:
@@ -1033,7 +1173,8 @@ def override_key_facts_section(
     block = "\n".join(["Key Facts:"] + facts)
 
     pattern = re.compile(
-        r"(?is)(^|\\n)Key Facts\\s*:(.*?)(?=\\n(?:Summary|What this means|What to do first|Warnings)\\s*:|\\Z)"
+        r"(^|\\n)(\\*\\*\\s*)?Key Facts\\s*\\*\\*?\\s*:?\\s*(.*?)(?=\\n(?:Summary|Key Facts|What this means|What to do first|Warnings)\\s*:|\\Z)",
+        flags=re.IGNORECASE | re.DOTALL,
     )
     if not pattern.search(text):
         return text
@@ -1081,10 +1222,17 @@ def ensure_no_placeholders(
     cleaned = re.sub(r"\bdebt ratio is\s+debt\b", f"debt ratio is {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bdebt ratio\s*:\s*debt\b", f"debt ratio: {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bdebt ratio\s+debt\b", f"debt ratio {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\brisk score is\s+\$?[\d,]+(?:\.\d+)?/100\b", f"risk score is {risk_value:.0f}/100", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\brisk score is\s+\$?[\d,]+(?:\.\d+)?\s+out of 100\b", f"risk score is {risk_value:.0f}/100", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
-        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
+        r"\bdebt ratio\s+of\s+income\s+of\s+annual\s+income\b",
+        f"debt ratio of {debt_ratio_value:.2f} ({debt_ratio_value*100:.0f}% of annual income)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\brisk score of\s+-?\$?[\d,]+(?:\.\d+)?\b", f"risk score of {risk_value:.0f}/100", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\brisk score is\s+-?\$?[\d,]+(?:\.\d+)?/100\b", f"risk score is {risk_value:.0f}/100", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\brisk score is\s+-?\$?[\d,]+(?:\.\d+)?\s+out of 100\b", f"risk score is {risk_value:.0f}/100", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+-?\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
         f"risk score is {risk_value:.0f}/100",
         cleaned,
         flags=re.IGNORECASE,
@@ -1096,7 +1244,11 @@ def ensure_no_placeholders(
             cleaned,
             flags=re.IGNORECASE,
         )
-        cleaned = re.sub(r"\$?(\d+(?:\.\d+)?)\s+months\b", r"\1 months", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\$[\d,]+(?:\.\d+)?\s+months\b", runway_value, cleaned, flags=re.IGNORECASE)
+        days_value = f"{max(1, round(metrics.get('runway_months', 0.0) * 30)):d} days"
+        cleaned = re.sub(r"\$[\d,]+(?:\.\d+)?\s+days\b", days_value, cleaned, flags=re.IGNORECASE)
+    else:
+        cleaned = re.sub(r"\$([\d,]+(?:\.\d+)?)\s+months\b", r"\1 months", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return cleaned
 
@@ -1588,7 +1740,7 @@ def repair_summary_placeholders(
             flags=re.IGNORECASE,
         )
         text = re.sub(
-            r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
+            r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+-?\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
             f"risk score is {risk_value:.0f}/100",
             text,
             flags=re.IGNORECASE,
@@ -1620,7 +1772,27 @@ def repair_summary_placeholders(
             text,
             flags=re.IGNORECASE,
         )
-    text = re.sub(r"\$(\d+(?:\.\d+)?)\s+months\b", r"\1 months", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"\b\d{1,3},\d{3}(?:\.\d+)?\s+months\b",
+            runway_value,
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\$[\d,]+(?:\.\d+)?\s+months\b",
+            runway_value,
+            text,
+            flags=re.IGNORECASE,
+        )
+        days_value = f"{max(1, round(metrics.get('runway_months', 0.0) * 30)):d} days"
+        text = re.sub(
+            r"\$[\d,]+(?:\.\d+)?\s+days\b",
+            days_value,
+            text,
+            flags=re.IGNORECASE,
+        )
+    if metrics.get("runway_months") is None:
+        text = re.sub(r"\$([\d,]+(?:\.\d+)?)\s+months\b", r"\1 months", text, flags=re.IGNORECASE)
     if metrics.get("runway_months") is not None:
         text = re.sub(
             r"\babout\s+\$?[\d,]+(?:\.\d+)?\s+months\b",
@@ -1709,14 +1881,17 @@ def has_placeholder_tokens(text: str) -> bool:
         r"\bdebt ratio near\s+debt\b",
         r"\bdebt-to-annual-income ratio\s*:\s*debt\b",
         r"\brisk score of\s+(savings|income|expenses|debt|buffer)\b",
+        r"\brisk score of\s+-?\$?[\d,]+(?:\.\d+)?\b",
         r"\brisk score is\s+[A-Za-z_]+/100\b",
         r"\brisk score is\s+[A-Za-z_]+\b",
-        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
+        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+-?\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
         r"\$[A-Za-z_]+\b",
         r"\bexpenses%|\bincome%|\bsavings%|\bdebt%\b",
         r"\blowpayment\b",
-        r"\$\d+(?:\.\d+)?\s+months\b",
+        r"\$[\d,]+(?:\.\d+)?\s+months\b",
+        r"\$[\d,]+(?:\.\d+)?\s+days\b",
         r"\bmonthly cash flow[^:]*:\s*\$?0(?:\.0+)?\b",
+        r"\bdebt ratio\s+of\s+income\s+of\s+annual\s+income\b",
     ]
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
@@ -1748,8 +1923,33 @@ def scrub_placeholder_leaks(
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
+            r"\b\d{1,3},\d{3}(?:\.\d+)?\s+months\b",
+            runway_value,
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
             r"\babout\s+\$?[\d,]+(?:\.\d+)?\s+months\b",
             runway_value,
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\$[\d,]+(?:\.\d+)?\s+months\b",
+            runway_value,
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\$[\d,]+(?:\.\d+)?\s+months\b",
+            runway_value,
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        days_value = f"{max(1, round(metrics.get('runway_months', 0.0) * 30)):d} days"
+        cleaned = re.sub(
+            r"\$[\d,]+(?:\.\d+)?\s+days\b",
+            days_value,
             cleaned,
             flags=re.IGNORECASE,
         )
@@ -1761,6 +1961,12 @@ def scrub_placeholder_leaks(
     cleaned = re.sub(r"\bdebt ratio is\s+debt\b", f"debt ratio is {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bdebt ratio\s*:\s*debt\b", f"debt ratio: {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bdebt ratio near\s+debt\b", f"debt ratio near {debt_ratio_value:.2f}", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\bdebt ratio\s+of\s+income\s+of\s+annual\s+income\b",
+        f"debt ratio of {debt_ratio_value:.2f} ({debt_ratio_value*100:.0f}% of annual income)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     risk_value = float(metrics.get("risk_score", 0.0))
     cleaned = re.sub(
         r"\brisk score of\s+(savings|income|expenses|debt|buffer)\b",
@@ -1769,18 +1975,35 @@ def scrub_placeholder_leaks(
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\brisk score\s*:\s*\$?[\d,]+(?:\.\d+)?(?:\s*/\s*100|\s+out of 100)?\b",
+        r"\brisk score of\s+-?\$?[\d,]+(?:\.\d+)?\b",
+        f"risk score of {risk_value:.0f}/100",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\brisk score\s*:\s*-?\$?[\d,]+(?:\.\d+)?(?:\s*/\s*100|\s+out of 100)?\b",
         f"risk score: {risk_value:.0f}/100",
         cleaned,
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
+        r"\brisk score(?:\s+\w+)?\s+(?:at|around|near|remains at)\s+-?\$?[\d,]+(?:\.\d+)?(?:/100|\s+out of 100)?\b",
         f"risk score is {risk_value:.0f}/100",
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\$(\d+(?:\.\d+)?)\s+months\b", r"\1 months", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\$([\d,]+(?:\.\d+)?)\s+months\b", r"\1 months", cleaned, flags=re.IGNORECASE)
+    # Fix "buffer of $X to 6 months" -> use proper 3-6 month range
+    expenses = float(profile.get("expenses_monthly", 0.0))
+    if expenses > 0:
+        low = f"${expenses * 3:,.0f}"
+        high = f"${expenses * 6:,.0f}"
+        cleaned = re.sub(
+            r"\b(buffer|emergency fund)\s+of\s+\$[\d,]+(?:\.\d+)?\s+to\s+6\s+months\b",
+            rf"\1 of {low} to {high} (3 to 6 months of expenses)",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
     return cleaned.strip()
 
 
@@ -1935,14 +2158,20 @@ def build_baseline_fallback_summary(
 
 
 def format_nemotron_error(message: str, context: str) -> str:
-    base = "Nemotron is unavailable right now. Please start the server and try again."
+    base = "Nemotron is unavailable right now."
+    if os.getenv("NIM_DEBUG", "").lower() in {"1", "true", "yes"} and message:
+        return f"{base} Debug: {message}"
     if not message:
         return base
     lowered = message.lower()
+    if "missing nvidia_api_key" in lowered or "api key" in lowered or "unauthorized" in lowered or "401" in lowered:
+        return f"{base} Missing or invalid NVIDIA_API_KEY."
+    if "openai client is unavailable" in lowered:
+        return f"{base} OpenAI client missing; install the openai package."
     if "timeout" in lowered:
         return f"{base} The request timed out."
-    if "connection" in lowered or "refused" in lowered:
-        return f"{base} We could not reach the server."
+    if "connection" in lowered or "refused" in lowered or "name or service not known" in lowered:
+        return f"{base} Could not reach the NIM endpoint."
     if "unavailable" in lowered:
         return base
     return base
@@ -2659,14 +2888,10 @@ def render_sidebar() -> None:
         profile_ready = st.session_state.profile is not None
         profile_class = "ready" if profile_ready else ""
         profile_label = "Profile: Ready" if profile_ready else "Profile: Incomplete"
-        nemotron_online = get_nemotron_status()
-        nemotron_class = "ready" if nemotron_online else ""
-        nemotron_label = "Nemotron: Online" if nemotron_online else "Nemotron: Offline"
         st.markdown(
             f"""
             <div class="status-stack">
               <div class="status-pill {profile_class}">{profile_label}</div>
-              <div class="status-pill {nemotron_class}">{nemotron_label}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2839,8 +3064,6 @@ def demo_profile_dialog() -> None:
         return
 
     profile = SAMPLE_REQUEST.get("profile", {})
-    scenario = SAMPLE_REQUEST.get("scenario", {})
-
     def money(value: float) -> str:
         return f"${float(value):,.0f}"
 
@@ -2862,17 +3085,6 @@ def demo_profile_dialog() -> None:
             ]
         )
     )
-    if scenario:
-        st.markdown("**Scenario defaults**")
-        st.markdown(
-            "\n".join(
-                [
-                    f"- Months unemployed: {scenario.get('months_unemployed', 0)}",
-                    f"- Expense cut: {scenario.get('expense_cut_pct', 0):.0f}%",
-                    f"- Severance: {money(scenario.get('severance', 0))}",
-                ]
-            )
-        )
     st.caption("Financial overview will generate when you open the Survival Timeline tab.")
 
     action_cols = st.columns([1, 1])
@@ -3628,6 +3840,7 @@ def render_chat() -> None:
                 response = ensure_section_spacing(response)
                 response = override_key_facts_section(response, llm_profile, llm_metrics or {})
                 response = ensure_section_spacing(response)
+                response = format_structured_response(response, float(llm_metrics.get("monthly_net", 0.0)))
                 response = bold_chat_headings(response)
                 response = append_followup_if_structured(response)
                 response = ensure_no_placeholders(response, llm_profile, llm_metrics or {})
