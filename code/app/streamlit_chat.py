@@ -10,6 +10,10 @@ from typing import Any, Dict, List
 
 import streamlit as st
 import streamlit.components.v1 as components
+try:
+    import altair as alt
+except Exception:
+    alt = None
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -54,6 +58,7 @@ JOB_STABILITY_OPTIONS = {
 JOB_STABILITY_LABELS = {value: label for label, value in JOB_STABILITY_OPTIONS.items()}
 BASELINE_SUMMARY_VERSION = "v4-currency-locked"
 CHAT_HISTORY_CURRENCY_VERSION = "v1"
+TIMELINE_HORIZON_MONTHS = 60
 
 FOLLOWUP_QUESTIONS = [
     "Would you like me to unpack any part of this in more detail?",
@@ -1787,6 +1792,113 @@ def compute_financials(
     }
 
 
+def first_depletion_month(timeline: List[float]) -> int | None:
+    for month, balance in enumerate(timeline):
+        if float(balance) <= 0:
+            return month
+    return None
+
+
+def render_timeline_chart(timeline: List[float], *, height: int = 260) -> int | None:
+    if not timeline:
+        st.info("No timeline data available yet.")
+        return None
+
+    points = [{"month": int(month), "balance": float(balance)} for month, balance in enumerate(timeline)]
+    depletion_month = first_depletion_month(timeline)
+
+    markers: List[Dict[str, Any]] = [
+        {"month": 0, "balance": float(timeline[0]), "label": "Start", "kind": "start"}
+    ]
+    final_month = len(timeline) - 1
+    if depletion_month is not None and depletion_month > 0:
+        markers.append(
+            {
+                "month": int(depletion_month),
+                "balance": float(timeline[depletion_month]),
+                "label": "Zero cash",
+                "kind": "depletion",
+            }
+        )
+    if final_month > 0 and (depletion_month is None or final_month != depletion_month):
+        markers.append(
+            {
+                "month": int(final_month),
+                "balance": float(timeline[-1]),
+                "label": "End",
+                "kind": "end",
+            }
+        )
+
+    st.caption("Blue line = projected cash balance by month. Orange dashed line = $0 cash threshold.")
+
+    if alt is None:
+        st.line_chart(timeline, height=height)
+        return depletion_month
+
+    base = alt.Chart(points).encode(
+        x=alt.X("month:Q", title="Month"),
+        y=alt.Y("balance:Q", title="Cash balance", axis=alt.Axis(format="$,.0f")),
+        tooltip=[
+            alt.Tooltip("month:Q", title="Month"),
+            alt.Tooltip("balance:Q", title="Cash balance", format="$,.0f"),
+        ],
+    )
+    balance_line = base.mark_line(color="#38bdf8", strokeWidth=3)
+    zero_line = alt.Chart([{"zero": 0.0}]).mark_rule(
+        color="#f97316",
+        strokeDash=[8, 6],
+        strokeWidth=2,
+    ).encode(y="zero:Q")
+
+    marker_layer = alt.Chart(markers).mark_point(filled=True, size=90).encode(
+        x=alt.X("month:Q", title="Month"),
+        y=alt.Y("balance:Q", title="Cash balance", axis=alt.Axis(format="$,.0f")),
+        color=alt.Color(
+            "kind:N",
+            scale=alt.Scale(
+                domain=["start", "depletion", "end"],
+                range=["#22c55e", "#ef4444", "#94a3b8"],
+            ),
+            legend=None,
+        ),
+        tooltip=[
+            alt.Tooltip("label:N", title="Point"),
+            alt.Tooltip("month:Q", title="Month"),
+            alt.Tooltip("balance:Q", title="Cash balance", format="$,.0f"),
+        ],
+    )
+    marker_labels = alt.Chart(markers).mark_text(
+        dx=8,
+        dy=-8,
+        color="#e2e8f0",
+        fontSize=11,
+    ).encode(
+        x=alt.X("month:Q", title="Month"),
+        y=alt.Y("balance:Q", title="Cash balance", axis=alt.Axis(format="$,.0f")),
+        text="label:N",
+    )
+
+    chart = alt.layer(zero_line, balance_line, marker_layer, marker_labels).properties(height=height)
+    st.altair_chart(chart, use_container_width=True)
+    return depletion_month
+
+
+def render_timeline_alignment_metrics(
+    *,
+    starting_balance: float,
+    net_cash_flow: float,
+    runway_months: float,
+    label: str,
+) -> None:
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Month 0 balance (chart)", format_currency(starting_balance))
+    a2.metric("Net cash flow (chart + analysis)", f"{format_money_signed(net_cash_flow)}/mo")
+    runway_label = "Not constrained" if net_cash_flow >= 0 else f"{runway_months:.1f} months"
+    a3.metric("Runway (analysis)", runway_label)
+    st.caption(f"{label}: These values are shared by the chart and the Nemotron analysis.")
+
+
 def parse_json_response(raw: str) -> Dict[str, Any] | None:
     if not raw:
         return None
@@ -2888,7 +3000,12 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     profile = payload["profile"]
     scenario = payload["scenario"]
 
-    horizon = max(int(scenario.get("months_unemployed", 0)), 1, int(scenario.get("income_start_month", 0) or 0), 36)
+    horizon = max(
+        int(scenario.get("months_unemployed", 0)),
+        1,
+        int(scenario.get("income_start_month", 0) or 0),
+        TIMELINE_HORIZON_MONTHS,
+    )
     computed = compute_financials(
         profile,
         scenario,
@@ -2936,6 +3053,8 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "metrics": metrics,
         "timeline": timeline,
+        "timeline_stats": computed.get("timeline_stats", {}),
+        "starting_balance": computed.get("starting_balance", 0.0),
         "savings_total": savings_total,
         "alert": alert,
         "summary": summary,
@@ -3765,16 +3884,36 @@ def render_scenario_builder() -> None:
     result = st.session_state.result
     if result:
         st.subheader("Scenario Results")
-        metrics = result.get("metrics", {})
+        metrics = sanitize_metrics(result.get("metrics", {}))
+        timeline = result.get("timeline", [])
+        scenario_net_cash_flow = -float(metrics.get("monthly_net_burn", 0.0))
+        starting_balance = float(result.get("starting_balance", timeline[0] if timeline else 0.0))
         m1, m2, m3 = st.columns(3)
-        m1.metric("Runway (months)", f"{metrics.get('runway_months', 0):.1f}")
+        runway_label = (
+            "Not constrained"
+            if scenario_net_cash_flow >= 0
+            else f"{metrics.get('runway_months', 0):.1f}"
+        )
+        m1.metric("Runway (months)", runway_label)
         m2.metric("Risk score", f"{metrics.get('risk_score', 0):.0f}/100")
         m3.metric("Adjusted risk", f"{metrics.get('adjusted_risk_score', 0):.0f}/100")
         st.progress(min(int(metrics.get("risk_score", 0)), 100))
 
-        timeline = result.get("timeline", [])
+        render_timeline_alignment_metrics(
+            starting_balance=starting_balance,
+            net_cash_flow=scenario_net_cash_flow,
+            runway_months=float(metrics.get("runway_months", 0.0)),
+            label="Scenario chart alignment",
+        )
+
         if timeline:
-            st.line_chart(timeline, height=240)
+            depletion_month = render_timeline_chart(timeline, height=260)
+            if depletion_month is None:
+                st.caption(
+                    f"Balance stays above $0 throughout the {len(timeline) - 1}-month chart horizon."
+                )
+            else:
+                st.caption(f"Balance crosses below $0 around month {depletion_month}.")
 
         st.subheader("Financial Analysis")
         summary_text = result.get("summary", "")
@@ -3810,8 +3949,13 @@ def render_survival_timeline() -> None:
         "relocation_cost": 0.0,
         "baseline_mode": True,
     }
-    computed = compute_financials(profile, baseline_scenario, baseline_mode=True, horizon_months=36)
-    metrics = computed["metrics"]
+    computed = compute_financials(
+        profile,
+        baseline_scenario,
+        baseline_mode=True,
+        horizon_months=TIMELINE_HORIZON_MONTHS,
+    )
+    metrics = sanitize_metrics(computed["metrics"])
     monthly_net = computed["monthly_net"]
     runway_months = metrics.get("runway_months", 0.0)
     risk_score = metrics.get("risk_score", 0.0)
@@ -3830,10 +3974,22 @@ def render_survival_timeline() -> None:
         st.progress(min(int(risk_score), 100))
 
     timeline = computed["timeline"]
-    if timeline:
-        st.line_chart(timeline, height=260)
-
     timeline_stats = computed["timeline_stats"]
+    starting_balance = float(computed.get("starting_balance", timeline[0] if timeline else 0.0))
+    render_timeline_alignment_metrics(
+        starting_balance=starting_balance,
+        net_cash_flow=monthly_net,
+        runway_months=float(runway_months),
+        label="Baseline chart alignment",
+    )
+    depletion_month = render_timeline_chart(timeline, height=280) if timeline else None
+    timeline_horizon = max(len(timeline) - 1, 0)
+    if timeline:
+        if depletion_month is None:
+            st.caption(f"Balance stays above $0 for the full {timeline_horizon}-month horizon.")
+        else:
+            st.caption(f"Balance crosses below $0 around month {depletion_month}.")
+
     risk_drivers = build_risk_drivers(profile, metrics)
 
     insights_cols = st.columns(2)
@@ -3849,13 +4005,20 @@ def render_survival_timeline() -> None:
             unsafe_allow_html=True,
         )
     with insights_cols[1]:
+        depletion_text = (
+            f"{int(depletion_month)} months"
+            if depletion_month is not None
+            else f"Not within {timeline_horizon} months"
+        )
+        max_drawdown = float(timeline_stats.get("max_drawdown", 0.0))
+        trend_slope = float(timeline_stats.get("trend_slope", 0.0))
         st.markdown(
             f"""
             <div class="card">
               <div class="card-title">Timeline Insights</div>
-              <div class="card-text">Months until zero: {timeline_stats['months_until_zero']:.0f}</div>
-              <div class="card-text">Max drawdown: ${timeline_stats['max_drawdown']:,.0f}</div>
-              <div class="card-text">Trend slope: ${timeline_stats['trend_slope']:,.0f} / month</div>
+              <div class="card-text">Cash depletion point: {depletion_text}</div>
+              <div class="card-text">Max drawdown: {format_currency(max_drawdown)}</div>
+              <div class="card-text">Trend slope: {format_money_signed(trend_slope)} / month</div>
             </div>
             """,
             unsafe_allow_html=True,
