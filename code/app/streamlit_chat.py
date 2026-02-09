@@ -1204,18 +1204,21 @@ def parse_summary_sections(text: str) -> Dict[str, Any]:
         if current:
             sections[current].append(line)
 
-    def _clean_bullet(text_line: str) -> str:
+    def _clean_bullet(text_line: str, section_name: str) -> str:
         cleaned = clean_text_block(text_line)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
         if cleaned and cleaned[0].isalpha():
             cleaned = cleaned[0].upper() + cleaned[1:]
+        if section_name == "Key Facts":
+            cleaned = re.sub(r"[.!?]+\s*$", "", cleaned).strip()
+            return cleaned
         if cleaned and cleaned[-1] not in ".!?":
             cleaned += "."
         return cleaned
 
     for key in list(sections.keys()):
-        sections[key] = [_clean_bullet(item) for item in sections[key] if item.strip()]
+        sections[key] = [_clean_bullet(item, key) for item in sections[key] if item.strip()]
 
     return {"sections": sections}
 
@@ -1880,6 +1883,7 @@ def render_structured_response(
 ) -> str:
     summary = clean_text_block(str(data.get("summary", "")).strip())
     key_facts = [clean_text_block(str(item)) for item in data.get("key_facts", []) if str(item).strip()]
+    key_facts = [re.sub(r"[.!?]+\s*$", "", fact).strip() for fact in key_facts]
     meaning = clean_text_block(str(data.get("meaning", "")).strip())
     actions = [clean_text_block(str(item)) for item in data.get("actions", []) if str(item).strip()]
     warnings = [clean_text_block(str(item)) for item in data.get("warnings", []) if str(item).strip()]
