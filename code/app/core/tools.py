@@ -76,7 +76,7 @@ def compute_runway(savings: float, monthly_expenses: float, severance: float) ->
 def compute_debt_ratio(debt: float, income_monthly: float) -> float:
     annual_income = income_monthly * 12.0
     if annual_income <= 0:
-        return 1.0
+        return 0.0 if debt <= 0 else 1.0
     return debt / annual_income
 
 
@@ -132,20 +132,6 @@ def adjust_risk_for_scenario(
     return clamp(base_score + penalty - reduction, 0.0, 100.0)
 
 
-def build_timeline(
-    starting_savings: float,
-    monthly_expenses: float,
-    months: int,
-    severance: float,
-) -> List[float]:
-    timeline = []
-    balance = starting_savings + severance
-    for _ in range(months + 1):
-        timeline.append(round(balance, 2))
-        balance -= monthly_expenses
-    return timeline
-
-
 def total_savings_leaks(costs: List[float]) -> float:
     return round(sum(costs), 2)
 
@@ -198,6 +184,7 @@ def clamp_llm_profile(profile: Dict[str, float]) -> Dict[str, float]:
     return {
         "income_monthly": clamp(profile["income_monthly"], 0.0, LLM_INCOME_MAX),
         "expenses_monthly": clamp(profile["expenses_monthly"], 0.0, LLM_EXPENSES_MAX),
+        "debt_payment_monthly": clamp(profile.get("debt_payment_monthly", 0.0), 0.0, LLM_EXTRA_EXPENSES_MAX),
         "savings": clamp(profile["savings"], 0.0, LLM_SAVINGS_MAX),
         "debt": clamp(profile["debt"], 0.0, LLM_DEBT_MAX),
         "dependents": clamp(profile["dependents"], 0.0, LLM_DEPENDENTS_MAX),

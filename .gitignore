@@ -5,6 +5,8 @@
 
 # General ignores
 .DS_Store
+risearc-env/
+code/risearc-env/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -55,3 +57,4 @@ cover/
 # Workbench Project Layout
 data/scratch/*
 !data/scratch/.gitkeep
+code/data/chat_sessions.json

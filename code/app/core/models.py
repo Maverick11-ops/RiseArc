@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class Profile(BaseModel):
     income_monthly: float = Field(ge=0)
     expenses_monthly: float = Field(ge=0)
+    debt_payment_monthly: float = Field(ge=0, default=0.0)
     savings: float = Field(ge=0)
     debt: float = Field(ge=0)
     industry: str = "Other"
@@ -19,6 +20,8 @@ class Scenario(BaseModel):
     severance: float = Field(ge=0)
     unemployment_benefit_monthly: float = Field(ge=0, default=0.0)
     other_income_monthly: float = Field(ge=0, default=0.0)
+    income_start_month: int = Field(ge=0, le=60, default=0)
+    income_start_amount: float = Field(ge=0, default=0.0)
     income_change_monthly: float = Field(default=0.0)
     extra_monthly_expenses: float = Field(ge=0, default=0.0)
     debt_payment_monthly: float = Field(ge=0, default=0.0)
@@ -44,7 +47,7 @@ class NewsEvent(BaseModel):
 class AnalyzeRequest(BaseModel):
     profile: Profile
     scenario: Scenario
-    subscriptions: List[Subscription] = []
+    subscriptions: List[Subscription] = Field(default_factory=list)
     news_event: Optional[NewsEvent] = None
 
 

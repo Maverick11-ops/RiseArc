@@ -16,6 +16,8 @@ def build_summary_prompt(
     job_stability_value: str,
     job_stability_weight: float,
 ) -> str:
+    profile_debt_payment = float(profile.get("debt_payment_monthly", 0.0))
+    total_required_outflow = float(profile.get("expenses_monthly", 0.0)) + profile_debt_payment
     monthly_addons_total = (
         scenario.get("extra_monthly_expenses", 0.0)
         + scenario.get("debt_payment_monthly", 0.0)
@@ -45,7 +47,9 @@ Warnings:
 
 User Profile:
 - Monthly income: {format_currency(profile['income_monthly'])}
-- Monthly expenses: {format_currency(profile['expenses_monthly'])}
+- Monthly living expenses (excl. debt): {format_currency(profile['expenses_monthly'])}
+- Debt payments (monthly baseline): {format_currency(profile_debt_payment)}
+- Total required monthly outflow: {format_currency(total_required_outflow)}
 - Savings: {format_currency(profile['savings'])}
 - Total debt: {format_currency(profile['debt'])}
 - Industry: {profile['industry']}
@@ -58,7 +62,9 @@ Scenario:
 - Severance: {format_currency(scenario['severance'])}
 - Unemployment benefit (monthly): {format_currency(scenario.get('unemployment_benefit_monthly', 0.0))}
 - Other income (monthly): {format_currency(scenario.get('other_income_monthly', 0.0))}
-- Debt payments (monthly): {format_currency(scenario.get('debt_payment_monthly', 0.0))}
+- New income starts (month): {scenario.get('income_start_month', 0):.0f}
+- New income amount (monthly): {format_currency(scenario.get('income_start_amount', 0.0))}
+- Additional debt payments (monthly): {format_currency(scenario.get('debt_payment_monthly', 0.0))}
 - Healthcare / insurance (monthly): {format_currency(scenario.get('healthcare_monthly', 0.0))}
 - Dependent care (monthly): {format_currency(scenario.get('dependent_care_monthly', 0.0))}
 - Job search / reskilling (monthly): {format_currency(scenario.get('job_search_monthly', 0.0))}

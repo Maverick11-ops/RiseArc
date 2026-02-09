@@ -2,6 +2,7 @@ SAMPLE_REQUEST = {
     "profile": {
         "income_monthly": 5200,
         "expenses_monthly": 3400,
+        "debt_payment_monthly": 320,
         "savings": 12000,
         "debt": 15000,
         "industry": "Tech",
@@ -15,7 +16,7 @@ SAMPLE_REQUEST = {
         "unemployment_benefit_monthly": 800,
         "other_income_monthly": 0,
         "extra_monthly_expenses": 150,
-        "debt_payment_monthly": 220,
+        "debt_payment_monthly": 0,
         "healthcare_monthly": 180,
         "dependent_care_monthly": 0,
         "job_search_monthly": 75,

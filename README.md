@@ -71,7 +71,7 @@ To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
 ## Notes
 
 - This project is an early-stage prototype (v0.1), bugs are expected.
-- This project was developed with the assistance of AI tools to accelerate development.
+- This project was developed with the assistance of AI assistants in Cursor to accelerate development.
 - UI perfection is not the primary goal in v0.1.
 - Nemotron-3-Nano was deployed using NVIDIA NIM.
 
