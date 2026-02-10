@@ -1199,6 +1199,7 @@ def normalize_chat_text(text: str) -> str:
 def parse_summary_sections(text: str) -> Dict[str, Any]:
     if not text:
         return {"sections": {}}
+    text = split_inline_structured_sections(text)
     headers = [
         "Summary",
         "Key Facts",
@@ -1240,6 +1241,11 @@ def parse_summary_sections(text: str) -> Dict[str, Any]:
     def _clean_bullet(text_line: str, section_name: str) -> str:
         cleaned = clean_text_block(text_line)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if cleaned in {".", ":", "-"}:
+            return ""
+        cleaned = re.sub(r"[.:]+\s*$", "", cleaned).strip()
+        if cleaned in {"", ".", ":", "-"}:
+            return ""
         cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
         if cleaned and cleaned[0].isalpha():
             cleaned = cleaned[0].upper() + cleaned[1:]
@@ -1252,8 +1258,39 @@ def parse_summary_sections(text: str) -> Dict[str, Any]:
 
     for key in list(sections.keys()):
         sections[key] = [_clean_bullet(item, key) for item in sections[key] if item.strip()]
+        sections[key] = [item for item in sections[key] if item]
 
     return {"sections": sections}
+
+
+def split_inline_structured_sections(text: str) -> str:
+    if not text:
+        return ""
+    header_map = {
+        "summary": "Summary",
+        "key facts": "Key Facts",
+        "what this means": "What this means",
+        "what to do first": "What to do first",
+        "actions": "Actions",
+        "warnings": "Warnings",
+    }
+    header_re = re.compile(
+        r"(?i)\b(summary|key facts|what this means|what to do first|actions|warnings)\s*:"
+    )
+    matches = list(header_re.finditer(text))
+    # Only normalize when this clearly looks like a structured response.
+    if len(matches) < 2:
+        return text.strip()
+
+    def _repl(match: re.Match) -> str:
+        canonical = header_map.get(match.group(1).lower(), match.group(1))
+        return f"\n{canonical}:\n"
+
+    fixed = header_re.sub(_repl, text)
+    fixed = re.sub(r"(?m)^\s*[-*•]\s*[.:]\s*$", "", fixed)
+    fixed = re.sub(r"(?m)^\s*[.:]\s*$", "", fixed)
+    fixed = re.sub(r"\n{3,}", "\n\n", fixed)
+    return fixed.strip()
 
 
 def enforce_currency_consistency(text: str) -> str:
@@ -1991,7 +2028,10 @@ def strip_markdown_artifacts(text: str) -> str:
     cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
     cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
     cleaned = cleaned.replace("`", "")
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    # Preserve section/newline structure for chat rendering.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines())
     return cleaned.strip()
 
 
@@ -2001,9 +2041,11 @@ def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
     prepped = re.sub(r"[\u200B-\u200D\uFEFF]", "", prepped)
     prepped = prepped.replace("−", "-").replace("—", "-").replace("–", "-")
     prepped = strip_markdown_artifacts(prepped)
+    prepped = split_inline_structured_sections(prepped)
     candidate = enforce_currency_consistency(enforce_non_investment_policy(prepped))
     candidate = normalize_money_spacing(candidate)
     candidate = strip_markdown_artifacts(candidate)
+    candidate = split_inline_structured_sections(candidate)
     if candidate and not has_corrupted_spacing(candidate) and not has_garbled_sequences(candidate):
         return candidate
 
@@ -2012,6 +2054,7 @@ def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
     repaired = enforce_currency_consistency(enforce_non_investment_policy(repaired_seed))
     repaired = normalize_money_spacing(repaired)
     repaired = strip_markdown_artifacts(repaired)
+    repaired = split_inline_structured_sections(repaired)
     if repaired and not has_corrupted_spacing(repaired) and not has_garbled_sequences(repaired):
         return repaired
 
@@ -2019,6 +2062,7 @@ def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
         fallback_clean = enforce_currency_consistency(enforce_non_investment_policy(fallback))
         fallback_clean = normalize_money_spacing(fallback_clean)
         fallback_clean = strip_markdown_artifacts(fallback_clean)
+        fallback_clean = split_inline_structured_sections(fallback_clean)
         if fallback_clean and not has_corrupted_spacing(fallback_clean) and not has_garbled_sequences(fallback_clean):
             return fallback_clean
 
