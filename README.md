@@ -65,7 +65,7 @@ A live Nemotron chatbot that assists the user and answers questions using the th
 ## Try It Now
 
 To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
-(There will be a redirect site as Streamlit Ui is being deployed with ngrok)
+(There will be a redirect site as Streamlit UI is being deployed with ngrok)
 
 ---
 
