@@ -1587,7 +1587,7 @@ def build_baseline_fallback_summary(
     return "\n".join(summary_lines + action_lines + warning_lines)
 
 
-def format_nemotron_error(message: str, context: str) -> str:
+def format_nemotron_error(message: str, _context: str) -> str:
     base = "Nemotron is unavailable right now."
     if os.getenv("NIM_DEBUG", "").lower() in {"1", "true", "yes"} and message:
         return f"{base} Debug: {message}"
@@ -3378,11 +3378,7 @@ def profile_signature(profile: Dict[str, Any]) -> str:
         return str(profile)
 
 
-def generate_baseline_summary(
-    profile: Dict[str, Any],
-    monthly_net: float,
-    runway_months: float,
-) -> str:
+def generate_baseline_summary(profile: Dict[str, Any]) -> str:
     if not query_nemotron or not extract_text:
         return "Nemotron is unavailable right now. Please start the server and try again."
 
@@ -3453,9 +3449,9 @@ def ensure_baseline_summary(
 
     if show_spinner:
         with st.spinner("Generating your financial overview..."):
-            summary = generate_baseline_summary(profile, monthly_net, runway_months)
+            summary = generate_baseline_summary(profile)
     else:
-        summary = generate_baseline_summary(profile, monthly_net, runway_months)
+        summary = generate_baseline_summary(profile)
 
     if summary.startswith("[nemotron error]"):
         return format_nemotron_error(summary, "financial overview")
@@ -3605,8 +3601,6 @@ def apply_demo_profile() -> None:
     st.session_state.baseline_summary = None
     st.session_state.baseline_profile_sig = None
     st.session_state.baseline_notice_pending = True
-    if SAMPLE_REQUEST.get("news_event"):
-        st.session_state["news_event"] = "Tech layoff wave"
     for item in SAMPLE_REQUEST.get("subscriptions", []):
         key = f"sub_{item['name']}"
         st.session_state[key] = True
@@ -3682,8 +3676,6 @@ def init_state() -> None:
         st.session_state.chat_history_currency_version = CHAT_HISTORY_CURRENCY_VERSION
     if "quick_prompt_used" not in st.session_state:
         st.session_state.quick_prompt_used = False
-    if "quick_prompt_text" not in st.session_state:
-        st.session_state.quick_prompt_text = ""
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = ""
     if "result" not in st.session_state:
@@ -4216,7 +4208,6 @@ def render_scenario_builder() -> None:
         run_submitted = st.form_submit_button("Run Analysis")
 
     if run_submitted:
-        st.session_state.scenario_note = scenario_note
         months_unemployed = parse_optional_int(
             months_unemployed_raw,
             0,

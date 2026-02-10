@@ -13,7 +13,6 @@ from .tools import (
     compute_risk_score,
     adjust_risk_for_scenario,
     job_stability_label,
-    job_stability_weight,
     total_savings_leaks,
     clamp,
 )
@@ -29,7 +28,6 @@ def _money(value: float) -> str:
 def _deterministic_summary(
     payload: AnalyzeRequest,
     metrics: Dict[str, float],
-    timeline_stats: Dict[str, float],
     alert: str,
     timeline: List[float],
 ) -> str:
@@ -231,7 +229,6 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     llm_timeline_stats = clamp_llm_timeline_stats(timeline_stats)
     llm_savings_total = clamp_llm_savings_total(savings_total)
     stability_label = job_stability_label(profile.job_stability)
-    stability_weight = job_stability_weight(profile.job_stability)
 
     prompt = build_summary_prompt(
         llm_profile,
@@ -241,7 +238,6 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
         llm_savings_total,
         llm_timeline_stats,
         stability_label,
-        stability_weight,
     )
     summary = ""
     try:
@@ -251,7 +247,7 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
         summary = ""
 
     if not summary:
-        summary = _deterministic_summary(payload, metrics, timeline_stats, alert, timeline)
+        summary = _deterministic_summary(payload, metrics, alert, timeline)
 
     return AnalyzeResponse(
         metrics=Metrics(**metrics),

@@ -14,7 +14,6 @@ def build_summary_prompt(
     savings_total: float,
     timeline_stats: Dict[str, float],
     job_stability_value: str,
-    job_stability_weight: float,
 ) -> str:
     profile_debt_payment = float(profile.get("debt_payment_monthly", 0.0))
     total_required_outflow = float(profile.get("expenses_monthly", 0.0)) + profile_debt_payment
