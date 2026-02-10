@@ -3919,7 +3919,7 @@ def render_landing() -> None:
     st.markdown("\n")
     cols = st.columns(3)
     cards = [
-        ("Survival Simulator", "Stress-test your finances with job-loss and expense-shift scenarios."),
+        ("Survival Simulator", "Simulate your finances under job-loss and expense-shift scenarios."),
         ("Scenario Builder", "Describe a scenario and review a tailored analysis."),
         ("Survival Timeline", "See a month-by-month runway and financial overview."),
     ]
@@ -3939,7 +3939,7 @@ def render_landing() -> None:
     steps = st.columns(3)
     step_cards = [
         ("1. Profile", "Secure your financial overview with one-time onboarding."),
-        ("2. Simulate", "Run stress tests in seconds and view the timeline."),
+        ("2. Simulate", "Run scenario checks in seconds and view the timeline."),
         ("3. Act", "Receive clear steps and guardrails from RiseArc."),
     ]
     for col, (title, text) in zip(steps, step_cards):
