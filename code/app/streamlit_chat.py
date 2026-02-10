@@ -57,8 +57,19 @@ JOB_STABILITY_OPTIONS = {
 }
 JOB_STABILITY_LABELS = {value: label for label, value in JOB_STABILITY_OPTIONS.items()}
 BASELINE_SUMMARY_VERSION = "v4-currency-locked"
-CHAT_HISTORY_CURRENCY_VERSION = "v1"
+CHAT_HISTORY_CURRENCY_VERSION = "v7-garbled-sequence-fix"
 TIMELINE_HORIZON_MONTHS = 60
+INVESTMENT_TERMS_PATTERN = re.compile(
+    r"\b("
+    r"invest|investing|investment|invested|"
+    r"stock|stocks|etf|etfs|index fund|index funds|mutual fund|mutual funds|"
+    r"portfolio|crypto|cryptocurrency|bitcoin|equity|equities|bond|bonds"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+NON_INVESTMENT_FALLBACK = (
+    "Focus on cash flow stability, debt reduction, and emergency savings first."
+)
 
 FOLLOWUP_QUESTIONS = [
     "Would you like me to unpack any part of this in more detail?",
@@ -345,6 +356,13 @@ h1, h2, h3, h4 {
   color: var(--muted);
   font-size: 0.9rem;
   margin-bottom: 6px;
+}
+
+.landing-card {
+  min-height: 138px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 
 .stButton > button {
@@ -1247,11 +1265,46 @@ def enforce_currency_consistency(text: str) -> str:
             normalized.append(f"- {clean_text_block(content)}")
             continue
         normalized.append(clean_text_block(stripped))
-    return "\n".join(normalized).strip()
+    normalized_text = "\n".join(normalized).strip()
+
+    money_terms = (
+        r"income|expenses?|spending|costs?|savings?|debt|surplus|deficit|cash\s*flow|burn|"
+        r"balance|payment|payments|salary|wage|budget|outflow|inflow|support|severance|benefits?"
+    )
+    number_token = r"(?:\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d+)?(?:[kKmMbB])?"
+
+    def _prefix_context_money(match: re.Match) -> str:
+        prefix = match.group(1)
+        sign = match.group(2) or ""
+        amount = match.group(3)
+        if re.search(r"(?i)(risk score|debt ratio|ratio|/100)", prefix):
+            return f"{prefix}{sign}{amount}"
+        return f"{prefix}{sign}${amount}"
+
+    def _prefix_number_before_money(match: re.Match) -> str:
+        sign = match.group(1) or ""
+        amount = match.group(2)
+        return f"{sign}${amount}"
+
+    # Term appears before the amount, e.g. "monthly expenses: 3,720"
+    normalized_text = re.sub(
+        rf"(?i)\b((?:{money_terms})[^\n$]{{0,30}}?)([+-]?)(?<![\d,$.])({number_token})(?!,\d)(?!\.\d)\b(?!\s*%)(?!\s*/\s*100\b)(?!\s*(?:months?|years?)\b)",
+        _prefix_context_money,
+        normalized_text,
+    )
+
+    # Amount appears before the term, e.g. "5,200 monthly income", "12,000 in savings"
+    normalized_text = re.sub(
+        rf"(?i)(?<![\d,$.])([+-]?)({number_token})(?!,\d)(?!\.\d)\b(?=\s*(?:in\s+|of\s+)?(?:monthly|annual|yearly)?\s*(?:{money_terms})\b)",
+        _prefix_number_before_money,
+        normalized_text,
+    )
+    normalized_text = re.sub(r"\${2,}", "$", normalized_text)
+    return normalized_text
 
 
 def render_summary_html(summary_text: str) -> str:
-    summary_text = enforce_currency_consistency(summary_text)
+    summary_text = enforce_readability_guardrail(summary_text, fallback=NON_INVESTMENT_FALLBACK)
     parsed = parse_summary_sections(summary_text)
     sections: Dict[str, List[str]] = parsed["sections"]
     order = ["Summary", "Key Facts", "What this means", "What to do first", "Actions", "Warnings"]
@@ -1304,6 +1357,7 @@ def build_scenario_fallback_summary(
     risk_score = float(metrics.get("risk_score", 0.0))
     income_start_month = int(float(scenario.get("income_start_month", 0) or 0))
     income_start_amount = float(scenario.get("income_start_amount", 0.0) or 0.0)
+    months_unemployed = int(float(scenario.get("months_unemployed", 0) or 0))
 
     savings = float(profile.get("savings", 0.0))
     severance = float(scenario.get("severance", 0.0))
@@ -1330,11 +1384,24 @@ def build_scenario_fallback_summary(
     else:
         support_phrase = f"with {money(monthly_support)} in monthly support"
 
-    verdict = (
-        f"Verdict: Without income, your buffer lasts about {runway_months:.1f} months before the cash runs out."
-        if monthly_net_burn > 0
-        else "Verdict: Your cash flow is positive under this scenario, so the near-term outlook is stable."
-    )
+    if monthly_net_burn > 0:
+        if runway_months >= float(TIMELINE_HORIZON_MONTHS):
+            verdict = (
+                "Verdict: Cash flow is negative during the stress phase, "
+                "but savings do not deplete within the modeled horizon."
+            )
+        elif months_unemployed > 0:
+            verdict = (
+                f"Verdict: During the unemployment phase, your buffer lasts about {runway_months:.1f} months "
+                "before cash runs out."
+            )
+        else:
+            verdict = (
+                f"Verdict: At the current burn rate, your buffer lasts about {runway_months:.1f} months "
+                "before the cash runs out."
+            )
+    else:
+        verdict = "Verdict: Your cash flow is positive under this scenario, so the near-term outlook is stable."
 
     if abs(computed_net_burn) < 0.01:
         burn_line = (
@@ -1522,8 +1589,10 @@ def clean_text_block(text: str) -> str:
     if not text:
         return ""
     cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = re.sub(r"(\d)\s+%", r"\1%", cleaned)
+    cleaned = re.sub(r"(?i)\b(\d+(?:\.\d+)?)\s+([kmb])\b", r"\1\2", cleaned)
     cleaned = re.sub(r"\s+([.,;:!?])", r"\1", cleaned)
-    cleaned = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", cleaned)
+    cleaned = re.sub(r"(?<=\d)(?=(?![kKmMbB]\b)[A-Za-z])", " ", cleaned)
     cleaned = cleaned.replace("$$", "$")
     cleaned = re.sub(r"\bthe user's\b", "your", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bthe user\b", "you", cleaned, flags=re.IGNORECASE)
@@ -1599,6 +1668,16 @@ def clean_text_block(text: str) -> str:
         return amount
 
     cleaned = contextual_amount_pattern.sub(_prefix_contextual_amount, cleaned)
+    cleaned = re.sub(
+        r"(?i)\b(?<!\$)([+-]?\d+(?:\.\d+)?[kmb])\b(?=\s*(?:down-?payment|payment|income|expenses?|costs?|savings?|debt|mortgage|rent|loan|budget|surplus|deficit|cash\s*flow|burn|balance|reserve|buffer))",
+        r"$\1",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)\b((?:income|savings?|debt|payment|payments|budget|costs?|expenses?|cash\s*flow|burn|down-?payment)\s*(?:of|is|are|was|were|:)?\s*)(?<!\$)([+-]?\d+(?:\.\d+)?[kmb])\b",
+        r"\1$\2",
+        cleaned,
+    )
 
     def _rewrite_job_stability(match: re.Match) -> str:
         industry = re.sub(r"^\s*the\s+", "", match.group(1).strip(), flags=re.IGNORECASE)
@@ -1613,6 +1692,76 @@ def clean_text_block(text: str) -> str:
         flags=re.IGNORECASE,
     )
     return cleaned.strip()
+
+
+def contains_investment_terms(text: str) -> bool:
+    return bool(INVESTMENT_TERMS_PATTERN.search(text or ""))
+
+
+def enforce_non_investment_policy(text: str) -> str:
+    if not text:
+        return ""
+
+    structured_header = re.compile(
+        r"^(Summary|Key Facts|What this means|What to do first|Actions|Warnings):$",
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    has_structured_sections = bool(structured_header.search(text))
+
+    if not has_structured_sections:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+        kept = [s for s in sentences if not contains_investment_terms(s)]
+        if kept:
+            return " ".join(kept).strip()
+        return NON_INVESTMENT_FALLBACK
+
+    lines = text.splitlines()
+    cleaned_lines: List[str] = []
+    current_section = ""
+    inserted_action_fallback = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            cleaned_lines.append(raw_line)
+            continue
+
+        header_match = structured_header.match(stripped)
+        if header_match:
+            current_section = header_match.group(1).lower()
+            cleaned_lines.append(raw_line)
+            inserted_action_fallback = False
+            continue
+
+        if not contains_investment_terms(stripped):
+            cleaned_lines.append(raw_line)
+            continue
+
+        if current_section in {"what to do first", "actions"}:
+            if not inserted_action_fallback:
+                cleaned_lines.append(
+                    "- Keep extra cash focused on debt reduction and emergency savings until your buffer is strong."
+                )
+                inserted_action_fallback = True
+            continue
+
+        if current_section == "summary":
+            cleaned_lines.append(
+                "You are strongest when you keep cash flow steady, reduce debt pressure, and build your emergency buffer."
+            )
+            continue
+        if current_section == "what this means":
+            cleaned_lines.append(
+                "The most reliable next step is to protect monthly cash flow, lower debt stress, and keep building reserves."
+            )
+            continue
+        if current_section == "warnings":
+            cleaned_lines.append("Keep your plan focused on near-term cash stability and debt resilience.")
+            continue
+
+    result = "\n".join(cleaned_lines)
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+    return result or NON_INVESTMENT_FALLBACK
 
 
 def capitalize_first(text: str) -> str:
@@ -1635,6 +1784,204 @@ def has_placeholder_artifacts(text: str) -> bool:
         r"\d+/\d+/\d+",
     ]
     return any(re.search(p, text) for p in patterns)
+
+
+def has_corrupted_spacing(text: str) -> bool:
+    if not text:
+        return False
+    normalized = re.sub(r"\s+", " ", str(text)).strip()
+    if not normalized:
+        return False
+
+    long_tokens = re.findall(r"\b[A-Za-z]{14,}\b", normalized)
+    if len(long_tokens) >= 2:
+        return True
+    if any(len(token) >= 22 for token in long_tokens):
+        return True
+    if re.search(r"\b[A-Za-z]{3,}\d{2,}[A-Za-z]{3,}\b", normalized):
+        return True
+    if re.search(r"\b\d{1,3}(?:,\d{3})+[A-Za-z]{4,}\b", normalized):
+        return True
+    if re.search(r"\b[A-Za-z]{4,}\d{1,3}(?:,\d{3})+\b", normalized):
+        return True
+
+    glued_patterns = [
+        r"[A-Za-z]{3,}incomeand[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}expensesand[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}cashflow[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}burningthrough[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}ifyou[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}yourcashflow[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}monthlyincome[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}monthlysurplus[A-Za-z]{2,}",
+        r"[A-Za-z]{3,}monthlydeficit[A-Za-z]{2,}",
+    ]
+    if any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in glued_patterns):
+        return True
+
+    suspicious_tokens = [
+        "monthlybaseline",
+        "thenallocate",
+        "allocateany",
+        "anysurplus",
+        "flowtoward",
+        "towardthe",
+    ]
+    if any(re.search(rf"(?i)\b{token}\b", normalized) for token in suspicious_tokens):
+        return True
+
+    repeated_chunk = re.search(r"(?i)\b([a-z][a-z\s,-]{16,}?)\1\b", normalized)
+    if repeated_chunk:
+        return True
+
+    finance_roots = r"(income|expense|expenses|savings|debt|cashflow|cash|flow|surplus|deficit|runway|risk|month|monthly)"
+    if re.search(rf"(?i)\b[a-z]*{finance_roots}[a-z]*{finance_roots}[a-z]*\b", normalized):
+        return True
+
+    return False
+
+
+def has_garbled_sequences(text: str) -> bool:
+    if not text:
+        return False
+    normalized = re.sub(r"\s+", " ", str(text)).strip()
+    if not normalized:
+        return False
+    patterns = [
+        r"(?i)\b(?:\$?\d{1,3}(?:,\d{3})*(?:\s*-\s*\$?\d{1,3}(?:,\d{3})*){2,})\b",
+        r"(?i)\b\d{1,3}(?:,\d{3})+[A-Za-z]{4,}",
+        r"(?i)\b[A-Za-z]{4,}\d{1,3}(?:,\d{3})+[A-Za-z]{2,}",
+        r"(?i)\bto reduce the \$?\d{1,3}\s+finally\b",
+        r"(?i)\bdebttoreducethe\b",
+        r"(?i)\bsetuparecurringtransferthatmovesatleast\b",
+        r"(?i)(finally,\s*set up a recurring transfer that moves at least.{0,120})\1",
+    ]
+    return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def collapse_repeated_token_runs(text: str) -> str:
+    if not text:
+        return ""
+    tokens = text.split()
+    if len(tokens) < 12:
+        return text
+    out: List[str] = []
+    i = 0
+    while i < len(tokens):
+        collapsed = False
+        max_n = min(18, (len(tokens) - i) // 2)
+        for n in range(max_n, 4, -1):
+            left = tokens[i : i + n]
+            right = tokens[i + n : i + 2 * n]
+            if left == right:
+                out.extend(left)
+                i += 2 * n
+                collapsed = True
+                break
+        if not collapsed:
+            out.append(tokens[i])
+            i += 1
+    return " ".join(out)
+
+
+def repair_spacing_artifacts(text: str) -> str:
+    if not text:
+        return ""
+    repaired = str(text)
+    repaired = repaired.replace("−", "-")
+    repaired = re.sub(r"([.!?])(?=[A-Za-z$])", r"\1 ", repaired)
+    repaired = re.sub(r"([,;:])(?=[A-Za-z$])", r"\1 ", repaired)
+    repaired = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", repaired)
+    repaired = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", repaired)
+    repaired = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", repaired)
+
+    word_joins = {
+        "ifyou": "if you",
+        "yourcashflow": "your cash flow",
+        "cashflow": "cash flow",
+        "monthlyincome": "monthly income",
+        "monthlyexpenses": "monthly expenses",
+        "monthlysurplus": "monthly surplus",
+        "monthlydeficit": "monthly deficit",
+        "monthlybaseline": "monthly baseline",
+        "burningthrough": "burning through",
+        "runwaybefore": "runway before",
+        "surplusand": "surplus and",
+        "deficitand": "deficit and",
+        "thenallocate": "then allocate",
+        "allocateany": "allocate any",
+        "anysurplus": "any surplus",
+        "flowtoward": "flow toward",
+        "towardthe": "toward the",
+        "debttoreducethe": "debt to reduce the",
+        "setuparecurringtransferthatmovesatleast": "set up a recurring transfer that moves at least",
+    }
+    for bad, good in word_joins.items():
+        repaired = re.sub(rf"(?i){bad}", good, repaired)
+
+    repaired = re.sub(r"(?i)(surplus)(cash)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(cash)(flow)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(monthly)(baseline)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(then)(allocate)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(allocate)(any)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(toward)(the)", r"\1 \2", repaired)
+    repaired = re.sub(r"(?i)(expenses)(about)", r"\1 about", repaired)
+    repaired = re.sub(r"(?i)(baseline)(then)", r"\1. \2", repaired)
+    repaired = re.sub(r"([A-Za-z])\$(\d)", r"\1 $\2", repaired)
+    repaired = re.sub(r"\$(\d[\d,]*)\s*-\s*(\d[\d,]*)", r"$\1-$\2", repaired)
+    repaired = re.sub(r"\$(\d[\d,]*)\s+to\s+(\d[\d,]*)", r"$\1 to $\2", repaired, flags=re.IGNORECASE)
+    repaired = re.sub(r"\b(\d{1,3}(?:,\d{3})*)\s*-\s*\1\s*-\s*(\d{1,3}(?:,\d{3})*)\b", r"\1-\2", repaired)
+    repaired = re.sub(r"\b(\d{1,3}(?:,\d{3})*)\s+to\s+\1\s+to\s+(\d{1,3}(?:,\d{3})*)\b", r"\1 to \2", repaired, flags=re.IGNORECASE)
+    repaired = re.sub(r"\b(\d+)\s*-\s*\1\s*-\s*(\d+)\b", r"\1-\2", repaired)
+    repaired = re.sub(r"\b(\d+)\s+to\s+\1\s+to\s+(\d+)\b", r"\1 to \2", repaired, flags=re.IGNORECASE)
+    repaired = re.sub(r"(?i)\bdebt to reduce the \d+\s+finally,\s*", "debt. Finally, ", repaired)
+    repaired = re.sub(
+        r"(?i)finally,\s*set up a recurring transfer that moves at least\s+\d{1,3}(?:,\d{3})*\s+debt\.\s*finally,\s*set up a recurring transfer that moves at least",
+        "Finally, set up a recurring transfer that moves at least",
+        repaired,
+    )
+    repaired = re.sub(r"(?<=\.\s)(then|and|but|so|or)\b", lambda m: m.group(1).capitalize(), repaired, flags=re.IGNORECASE)
+
+    repaired = collapse_repeated_token_runs(repaired)
+    repaired = re.sub(r"\s{2,}", " ", repaired)
+    repaired = re.sub(r"\n{3,}", "\n\n", repaired)
+    return repaired.strip()
+
+
+def normalize_money_spacing(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = str(text)
+    cleaned = re.sub(r"([A-Za-z])\$(\d)", r"\1 $\2", cleaned)
+    cleaned = re.sub(r"\$(\d[\d,]*)\s*-\s*(\d[\d,]*)", r"$\1-$\2", cleaned)
+    cleaned = re.sub(r"\$(\d[\d,]*)\s+to\s+(\d[\d,]*)", r"$\1 to $\2", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
+    prepped = html.unescape(str(text or ""))
+    prepped = unicodedata.normalize("NFKC", prepped)
+    prepped = re.sub(r"[\u200B-\u200D\uFEFF]", "", prepped)
+    prepped = prepped.replace("−", "-").replace("—", "-").replace("–", "-")
+    candidate = enforce_currency_consistency(enforce_non_investment_policy(prepped))
+    candidate = normalize_money_spacing(candidate)
+    if candidate and not has_corrupted_spacing(candidate) and not has_garbled_sequences(candidate):
+        return candidate
+
+    repaired_seed = repair_spacing_artifacts(prepped)
+    repaired_seed = repair_spacing_artifacts(repaired_seed)
+    repaired = enforce_currency_consistency(enforce_non_investment_policy(repaired_seed))
+    repaired = normalize_money_spacing(repaired)
+    if repaired and not has_corrupted_spacing(repaired) and not has_garbled_sequences(repaired):
+        return repaired
+
+    if fallback:
+        fallback_clean = enforce_currency_consistency(enforce_non_investment_policy(fallback))
+        fallback_clean = normalize_money_spacing(fallback_clean)
+        if fallback_clean and not has_corrupted_spacing(fallback_clean) and not has_garbled_sequences(fallback_clean):
+            return fallback_clean
+
+    return "I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -1700,11 +2047,9 @@ def compute_financials(
     relocation_cost = _safe_float(scenario.get("relocation_cost", 0.0))
 
     monthly_expenses_cut = expenses * (1 - expense_cut_pct / 100.0) + baseline_debt_payment
-    monthly_support_base = unemployment_benefit_monthly + other_income_monthly + income_change_monthly
-    if baseline_mode:
-        monthly_support_base += income
-    support_shortfall = max(-monthly_support_base, 0.0)
-    monthly_support_base = max(monthly_support_base, 0.0)
+    support_adjustment_base = unemployment_benefit_monthly + other_income_monthly + income_change_monthly
+    support_shortfall = max(-support_adjustment_base, 0.0)
+    support_adjustment_base = max(support_adjustment_base, 0.0)
 
     monthly_addons = (
         extra_monthly_expenses
@@ -1717,10 +2062,23 @@ def compute_financials(
     one_time_total = one_time_expense + relocation_cost
     starting_balance = savings + severance + one_time_income - one_time_total
 
+    def _employment_income_for_month(month: int) -> float:
+        if baseline_mode:
+            return income
+        if months_unemployed > 0 and month <= months_unemployed:
+            return 0.0
+        return income
+
     def _support_for_month(month: int) -> float:
-        support = monthly_support_base
+        employment_income = _employment_income_for_month(month)
+        support = employment_income + support_adjustment_base
         if income_start_month > 0 and income_start_amount > 0 and month >= income_start_month:
-            support += income_start_amount
+            # During unemployment scenarios, treat this as replacement income.
+            # Otherwise treat it as additional income on top of the existing salary.
+            if not baseline_mode and months_unemployed > 0:
+                support = support - employment_income + income_start_amount
+            else:
+                support += income_start_amount
         return support
 
     def _net_burn_for_month(month: int) -> float:
@@ -1729,17 +2087,22 @@ def compute_financials(
     monthly_support_first_month = _support_for_month(1)
     monthly_net_burn = _net_burn_for_month(1)
 
-    max_months = 60
+    max_months = TIMELINE_HORIZON_MONTHS
     if starting_balance <= 0:
         runway_months = 0.0
     else:
         runway_months = float(max_months)
         balance_probe = starting_balance
         for month in range(1, max_months + 1):
-            balance_probe -= _net_burn_for_month(month)
-            if balance_probe <= 0:
-                runway_months = float(month)
+            burn = _net_burn_for_month(month)
+            balance_after = balance_probe - burn
+            if balance_after <= 0:
+                if burn > 0:
+                    runway_months = (month - 1) + (balance_probe / burn)
+                else:
+                    runway_months = float(month)
                 break
+            balance_probe = balance_after
 
     timeline: List[float] = []
     balance = starting_balance
@@ -1836,7 +2199,7 @@ def render_timeline_chart(timeline: List[float], *, height: int = 260) -> int | 
         st.line_chart(timeline, height=height)
         return depletion_month
 
-    base = alt.Chart(points).encode(
+    base = alt.Chart(alt.Data(values=points)).encode(
         x=alt.X("month:Q", title="Month"),
         y=alt.Y("balance:Q", title="Cash balance", axis=alt.Axis(format="$,.0f")),
         tooltip=[
@@ -1845,13 +2208,13 @@ def render_timeline_chart(timeline: List[float], *, height: int = 260) -> int | 
         ],
     )
     balance_line = base.mark_line(color="#38bdf8", strokeWidth=3)
-    zero_line = alt.Chart([{"zero": 0.0}]).mark_rule(
+    zero_line = alt.Chart(alt.Data(values=[{"zero": 0.0}])).mark_rule(
         color="#f97316",
         strokeDash=[8, 6],
         strokeWidth=2,
     ).encode(y="zero:Q")
 
-    marker_layer = alt.Chart(markers).mark_point(filled=True, size=90).encode(
+    marker_layer = alt.Chart(alt.Data(values=markers)).mark_point(filled=True, size=90).encode(
         x=alt.X("month:Q", title="Month"),
         y=alt.Y("balance:Q", title="Cash balance", axis=alt.Axis(format="$,.0f")),
         color=alt.Color(
@@ -1868,7 +2231,7 @@ def render_timeline_chart(timeline: List[float], *, height: int = 260) -> int | 
             alt.Tooltip("balance:Q", title="Cash balance", format="$,.0f"),
         ],
     )
-    marker_labels = alt.Chart(markers).mark_text(
+    marker_labels = alt.Chart(alt.Data(values=markers)).mark_text(
         dx=8,
         dy=-8,
         color="#e2e8f0",
@@ -1882,21 +2245,6 @@ def render_timeline_chart(timeline: List[float], *, height: int = 260) -> int | 
     chart = alt.layer(zero_line, balance_line, marker_layer, marker_labels).properties(height=height)
     st.altair_chart(chart, use_container_width=True)
     return depletion_month
-
-
-def render_timeline_alignment_metrics(
-    *,
-    starting_balance: float,
-    net_cash_flow: float,
-    runway_months: float,
-    label: str,
-) -> None:
-    a1, a2, a3 = st.columns(3)
-    a1.metric("Month 0 balance (chart)", format_currency(starting_balance))
-    a2.metric("Net cash flow (chart + analysis)", f"{format_money_signed(net_cash_flow)}/mo")
-    runway_label = "Not constrained" if net_cash_flow >= 0 else f"{runway_months:.1f} months"
-    a3.metric("Runway (analysis)", runway_label)
-    st.caption(f"{label}: These values are shared by the chart and the Nemotron analysis.")
 
 
 def parse_json_response(raw: str) -> Dict[str, Any] | None:
@@ -1993,11 +2341,27 @@ def render_structured_response(
     include_followup: bool = True,
     force_simple_terms: bool = False,
 ) -> str:
+    def _normalize_action_wording(action_text: str) -> str:
+        lowered = action_text.lower()
+        if (
+            "break even" in lowered
+            and "cut" in lowered
+            and ("expense" in lowered or "spending" in lowered)
+        ):
+            return "Reduce discretionary spending to lower the monthly burn as much as possible"
+        if re.search(
+            r"\bcut\s+\$?\d[\d,]*(?:\.\d+)?\s+(?:in\s+)?expenses?\b",
+            lowered,
+        ) and "break even" in lowered:
+            return "Reduce discretionary spending to lower the monthly burn as much as possible"
+        return action_text
+
     summary = clean_text_block(str(data.get("summary", "")).strip())
     key_facts = [clean_text_block(str(item)) for item in data.get("key_facts", []) if str(item).strip()]
     key_facts = [re.sub(r"[.!?]+\s*$", "", fact).strip() for fact in key_facts]
     meaning = clean_text_block(str(data.get("meaning", "")).strip())
     actions = [clean_text_block(str(item)) for item in data.get("actions", []) if str(item).strip()]
+    actions = [_normalize_action_wording(item) for item in actions]
     warnings = [clean_text_block(str(item)) for item in data.get("warnings", []) if str(item).strip()]
     followup = clean_text_block(str(data.get("followup", "")).strip())
 
@@ -2097,6 +2461,8 @@ Your job is to explain the user's finances clearly and helpfully based only on t
 Do NOT calculate new numbers. Use the formatted numbers exactly as provided.
 Do NOT invent missing values. If you need clarification, ask a follow-up question.
 Do NOT provide investment advice or stock recommendations.
+Do NOT mention investing, investments, stocks, ETFs, crypto, portfolios, mutual funds, or bonds.
+Keep the tone supportive and practical, never alarmist or discouraging.
 
 Return ONLY valid JSON with the following schema:
 {{
@@ -2121,6 +2487,8 @@ Rules:
 - Keep "meaning" conversational. Start with "In simple terms:" only if the user explicitly asked for simple wording.
 - Avoid wording like "job stability in tech"; prefer "stable job in the tech industry".
 - In "actions", include at least one concrete numeric target (dollars per month or months of expenses) when data allows.
+- Keep recommendations focused on controllable steps in budgeting, debt management, income stability, and emergency reserves.
+- When risk is high, pair each warning with a clear next step.
 - If net cash flow is negative, prioritize actions in this order: cut expenses, secure income, then debt optimization.
 - Do not suggest "prioritize emergency savings" as the first action when income is already gone and cash flow is negative.
 - If runway is "Not constrained", say savings are growing.
@@ -2269,10 +2637,13 @@ Rules:
 - Answer the user's exact question first. If they asked for clarification, clarify the specific prior point.
 - Do not use fixed report sections like Summary/Key Facts unless the user explicitly asks for a structured report.
 - Keep the response concise and human (about 2-6 sentences).
+- If the user asks what to do next, give a prioritized 2-4 step plan with at least one concrete numeric target when data allows.
 - Use only the values in CONTEXT when citing numbers.
 - Prefix money amounts with "$".
 - If the user says "yes" without details after your follow-up question, ask one short clarifying question.
+- Keep tone supportive and solution-focused.
 - Do not provide investment advice.
+- Do not mention investing, investments, stocks, ETFs, crypto, portfolios, mutual funds, or bonds.
 
 RECENT CONVERSATION:
 {history_snippet or "(none)"}
@@ -2293,7 +2664,13 @@ USER QUESTION:
 
     if not raw:
         return "Can you clarify what you want me to explain first: cash flow, runway, or risk?"
-    return enforce_currency_consistency(clean_text_block(raw))
+    cleaned = enforce_readability_guardrail(
+        clean_text_block(raw),
+        fallback="I can clarify that more cleanly. Do you want me to focus on cash flow, runway, or risk first?",
+    )
+    if has_corrupted_spacing(cleaned):
+        return "I can clarify that more cleanly. Do you want me to focus on cash flow, runway, or risk first?"
+    return cleaned
 
 
 def nemotron_generate_structured(
@@ -2306,8 +2683,8 @@ def nemotron_generate_structured(
     question: str | None = None,
     include_followup: bool = True,
 ) -> str:
-    def finalize_output(text: str) -> str:
-        return enforce_currency_consistency(text or "")
+    def finalize_output(text: str, fallback: str = "") -> str:
+        return enforce_readability_guardrail(text or "", fallback=fallback)
 
     simple_terms_requested = user_requested_simple_terms(question or "")
 
@@ -2399,7 +2776,7 @@ def nemotron_generate_structured(
         record_nemotron_status(False)
         fallback = deterministic_fallback()
         if fallback:
-            return finalize_output(fallback)
+            return finalize_output(fallback, fallback=fallback)
         return finalize_output(format_nemotron_error(str(exc), mode))
 
     parsed = parse_json_response(raw)
@@ -2412,7 +2789,8 @@ def nemotron_generate_structured(
             parsed.get("warnings"),
         ]
     ):
-        return finalize_output(deterministic_fallback())
+        fallback = deterministic_fallback()
+        return finalize_output(fallback, fallback=fallback)
 
     parsed = apply_structured_guardrails(parsed, mode, profile, scenario_metrics or metrics, scenario)
     text = render_structured_response(
@@ -2420,9 +2798,11 @@ def nemotron_generate_structured(
         include_followup=include_followup,
         force_simple_terms=simple_terms_requested,
     )
-    if not text or has_placeholder_artifacts(text):
-        return finalize_output(deterministic_fallback())
-    return finalize_output(text)
+    if not text or has_placeholder_artifacts(text) or has_corrupted_spacing(text):
+        fallback = deterministic_fallback()
+        return finalize_output(fallback, fallback=fallback)
+    fallback = deterministic_fallback()
+    return finalize_output(text, fallback=fallback)
 
 
 def format_readable_text(text: str) -> str:
@@ -2946,7 +3326,7 @@ def generate_baseline_summary(
         record_nemotron_status(True)
         if not summary.strip():
             return "Nemotron returned an empty summary. Please try again."
-        return enforce_currency_consistency(summary)
+        return enforce_readability_guardrail(summary)
     except Exception as exc:
         record_nemotron_status(False)
         return format_nemotron_error(str(exc), "financial overview")
@@ -2958,11 +3338,24 @@ def ensure_baseline_summary(
     runway_months: float,
     show_spinner: bool = False,
 ) -> str:
+    debt_ratio = compute_debt_ratio(float(profile.get("debt", 0.0)), float(profile.get("income_monthly", 0.0))) if compute_debt_ratio else 0.0
+    risk_score = (
+        compute_risk_score(runway_months, debt_ratio, profile.get("job_stability", "stable"), profile.get("industry", "Other"))
+        if compute_risk_score
+        else 0.0
+    )
+    baseline_fallback = build_baseline_fallback_summary(
+        profile,
+        monthly_net,
+        runway_months,
+        {"debt_ratio": debt_ratio, "risk_score": risk_score},
+    )
+
     sig = profile_signature(profile)
     cached = st.session_state.get("baseline_summary")
     cached_sig = st.session_state.get("baseline_profile_sig")
     if cached and cached_sig == sig:
-        normalized_cached = enforce_currency_consistency(cached)
+        normalized_cached = enforce_readability_guardrail(cached, fallback=baseline_fallback)
         if normalized_cached != cached:
             st.session_state.baseline_summary = normalized_cached
         return normalized_cached
@@ -2976,7 +3369,7 @@ def ensure_baseline_summary(
     if summary.startswith("[nemotron error]"):
         return format_nemotron_error(summary, "financial overview")
 
-    summary = enforce_currency_consistency(summary)
+    summary = enforce_readability_guardrail(summary, fallback=baseline_fallback)
     st.session_state.baseline_summary = summary
     st.session_state.baseline_profile_sig = sig
     return summary
@@ -3048,7 +3441,20 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         question=payload.get("scenario_note", ""),
         include_followup=False,
     )
-    summary = enforce_currency_consistency(summary)
+    if mode == "overview":
+        baseline_fallback = build_baseline_fallback_summary(
+            profile,
+            baseline_monthly_net,
+            baseline_runway,
+            {
+                "debt_ratio": debt_ratio,
+                "risk_score": baseline_risk,
+            },
+        )
+        summary = enforce_readability_guardrail(summary, fallback=baseline_fallback)
+    else:
+        scenario_fallback = build_scenario_fallback_summary(profile, scenario, metrics)
+        summary = enforce_readability_guardrail(summary, fallback=scenario_fallback)
 
     return {
         "metrics": metrics,
@@ -3058,6 +3464,8 @@ def local_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
         "savings_total": savings_total,
         "alert": alert,
         "summary": summary,
+        "scenario": dict(scenario),
+        "profile": dict(profile),
     }
 
 
@@ -3125,14 +3533,17 @@ def render_sidebar() -> None:
             button_type = "primary" if is_active else "secondary"
             if st.button(option, use_container_width=True, type=button_type):
                 st.session_state.active_view = option
+                st.rerun()
 
         st.markdown("---")
         if st.button("Edit profile", use_container_width=True):
             st.session_state.show_profile_dialog = True
+            st.rerun()
 
         if SAMPLE_REQUEST and st.button("Load demo profile", use_container_width=True):
             st.session_state.show_demo_dialog = True
             st.session_state.show_profile_dialog = False
+            st.rerun()
 
         st.markdown("---")
         profile_ready = st.session_state.profile is not None
@@ -3169,7 +3580,7 @@ def init_state() -> None:
             role = str(item.get("role", ""))
             content = str(item.get("content", ""))
             if role == "assistant":
-                normalized = enforce_currency_consistency(content)
+                normalized = enforce_readability_guardrail(content)
                 if normalized != content:
                     changed = True
                 migrated.append({"role": role, "content": normalized})
@@ -3497,8 +3908,8 @@ def render_landing() -> None:
           <span class="badge">Nemotron-3-Nano Powered</span>
           <div class="hero-title">RiseArc Financial Assistant</div>
           <div class="hero-subtitle">
-            A focused financial analysis app that simulates scenarios, summarizes risk, and delivers
-            clear, human guidance. Built for clarity and real-world decisions.
+            A financial analysis app that simulates real-world scenarios, summarizes risks, and delivers actionable plans.
+            RiseArc helps you understand how resilient your finances are under different situations.
           </div>
         </div>
         """,
@@ -3509,14 +3920,14 @@ def render_landing() -> None:
     cols = st.columns(3)
     cards = [
         ("Survival Simulator", "Stress-test your finances with job-loss and expense-shift scenarios."),
-        ("Scenario Builder", "Describe a scenario in plain language and review a tailored analysis."),
+        ("Scenario Builder", "Describe a scenario and review a tailored analysis."),
         ("Survival Timeline", "See a month-by-month runway and financial overview."),
     ]
     for col, (title, text) in zip(cols, cards):
         with col:
             st.markdown(
                 f"""
-                <div class="card fade-in">
+                <div class="card landing-card fade-in">
                   <div class="card-title">{title}</div>
                   <div class="card-text">{text}</div>
                 </div>
@@ -3535,7 +3946,7 @@ def render_landing() -> None:
         with col:
             st.markdown(
                 f"""
-                <div class="card fade-in">
+                <div class="card landing-card fade-in">
                   <div class="card-title">{title}</div>
                   <div class="card-text">{text}</div>
                 </div>
@@ -3558,6 +3969,7 @@ def render_landing() -> None:
     with cta_cols[1]:
         if st.button("Enter Scenario Builder", type="primary"):
             st.session_state.active_view = "Scenario Builder"
+            st.rerun()
 
 
 def build_payload_from_state(
@@ -3630,6 +4042,7 @@ def render_scenario_builder() -> None:
         st.info("Please complete your profile to unlock the full experience.")
         if st.button("Complete profile"):
             st.session_state.show_profile_dialog = True
+            st.rerun()
         return
 
     def scenario_text_field(label: str, key: str, placeholder: str) -> str:
@@ -3886,25 +4299,13 @@ def render_scenario_builder() -> None:
         st.subheader("Scenario Results")
         metrics = sanitize_metrics(result.get("metrics", {}))
         timeline = result.get("timeline", [])
-        scenario_net_cash_flow = -float(metrics.get("monthly_net_burn", 0.0))
-        starting_balance = float(result.get("starting_balance", timeline[0] if timeline else 0.0))
         m1, m2, m3 = st.columns(3)
-        runway_label = (
-            "Not constrained"
-            if scenario_net_cash_flow >= 0
-            else f"{metrics.get('runway_months', 0):.1f}"
-        )
+        runway_value = float(metrics.get("runway_months", 0.0))
+        runway_label = "Not constrained" if runway_value >= float(TIMELINE_HORIZON_MONTHS) else f"{runway_value:.1f}"
         m1.metric("Runway (months)", runway_label)
         m2.metric("Risk score", f"{metrics.get('risk_score', 0):.0f}/100")
         m3.metric("Adjusted risk", f"{metrics.get('adjusted_risk_score', 0):.0f}/100")
         st.progress(min(int(metrics.get("risk_score", 0)), 100))
-
-        render_timeline_alignment_metrics(
-            starting_balance=starting_balance,
-            net_cash_flow=scenario_net_cash_flow,
-            runway_months=float(metrics.get("runway_months", 0.0)),
-            label="Scenario chart alignment",
-        )
 
         if timeline:
             depletion_month = render_timeline_chart(timeline, height=260)
@@ -3920,7 +4321,14 @@ def render_scenario_builder() -> None:
         if not summary_text.strip():
             st.info("Nemotron returned an empty summary. Please try again.")
         else:
-            summary_text = enforce_currency_consistency(summary_text)
+            fallback_scenario = result.get("scenario", {})
+            fallback_profile = result.get("profile", st.session_state.profile or {})
+            fallback_text = build_scenario_fallback_summary(
+                fallback_profile,
+                fallback_scenario if isinstance(fallback_scenario, dict) else {},
+                metrics,
+            )
+            summary_text = enforce_readability_guardrail(summary_text, fallback=fallback_text)
             st.markdown(format_structured_markdown(summary_text))
 
 
@@ -3929,6 +4337,7 @@ def render_survival_timeline() -> None:
         st.info("Please complete your profile to unlock the full experience.")
         if st.button("Complete profile"):
             st.session_state.show_profile_dialog = True
+            st.rerun()
         return
 
     profile = st.session_state.profile
@@ -3975,13 +4384,6 @@ def render_survival_timeline() -> None:
 
     timeline = computed["timeline"]
     timeline_stats = computed["timeline_stats"]
-    starting_balance = float(computed.get("starting_balance", timeline[0] if timeline else 0.0))
-    render_timeline_alignment_metrics(
-        starting_balance=starting_balance,
-        net_cash_flow=monthly_net,
-        runway_months=float(runway_months),
-        label="Baseline chart alignment",
-    )
     depletion_month = render_timeline_chart(timeline, height=280) if timeline else None
     timeline_horizon = max(len(timeline) - 1, 0)
     if timeline:
@@ -4133,11 +4535,17 @@ def render_chat() -> None:
         st.session_state.pending_prompt = ""
         st.session_state.quick_prompt_used = True
 
-    for message in st.session_state.chat_history:
+    for idx, message in enumerate(st.session_state.chat_history):
         avatar = "🤖" if message["role"] == "assistant" else "👤"
         with st.chat_message(message["role"], avatar=avatar):
             if message["role"] == "assistant":
-                st.markdown(message["content"])
+                safe_content = enforce_readability_guardrail(
+                    str(message.get("content", "")),
+                    fallback="I can restate that clearly. Ask me again and I will answer cleanly.",
+                )
+                if safe_content != message.get("content", ""):
+                    st.session_state.chat_history[idx]["content"] = safe_content
+                st.markdown(safe_content)
             else:
                 st.text(message["content"])
 
@@ -4194,7 +4602,7 @@ def render_chat() -> None:
                         "Do not use a fixed template or repeated sentence; vary your wording. "
                         "If the user greets you, greet them back. If they ask how you are, answer politely "
                         "and then ask what they would like help with. Do not mention finances unless the "
-                        "user does."
+                        "user does. Never mention investing, stocks, ETFs, crypto, or portfolios."
                         f"\nUser: {pending_prompt}\nAssistant:"
                     )
                     response = extract_text(query_nemotron(smalltalk_prompt)).strip()
@@ -4223,12 +4631,18 @@ def render_chat() -> None:
             except Exception as exc:
                 record_nemotron_status(False)
                 response = format_nemotron_error(str(exc), "chat response")
-            response = enforce_currency_consistency(response)
+            response = enforce_readability_guardrail(
+                response,
+                fallback="I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?",
+            )
             display_response = format_readable_text(response)
             typing_placeholder.markdown(display_response)
 
         st.session_state.chat_history.append({"role": "user", "content": pending_prompt})
-        formatted_response = format_readable_text(response)
+        formatted_response = enforce_readability_guardrail(
+            format_readable_text(response),
+            fallback="I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?",
+        )
         st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
         st.session_state.pending_prompt = ""
 

@@ -17,6 +17,8 @@ from .tools import (
     total_savings_leaks,
     clamp,
 )
+
+TIMELINE_HORIZON_MONTHS = 60
 from app.ai.nemotron_client import extract_text, query_nemotron
 
 
@@ -24,19 +26,29 @@ def _money(value: float) -> str:
     return f"${value:,.0f}"
 
 
-def _deterministic_summary(payload: AnalyzeRequest, metrics: Dict[str, float], timeline_stats: Dict[str, float], alert: str) -> str:
+def _deterministic_summary(
+    payload: AnalyzeRequest,
+    metrics: Dict[str, float],
+    timeline_stats: Dict[str, float],
+    alert: str,
+    timeline: List[float],
+) -> str:
     profile = payload.profile
     scenario = payload.scenario
     monthly_net_burn = float(metrics.get("monthly_net_burn", 0.0))
     runway_months = float(metrics.get("runway_months", 0.0))
     risk_score = float(metrics.get("adjusted_risk_score", metrics.get("risk_score", 0.0)))
     debt_ratio = float(metrics.get("debt_ratio", 0.0))
+    depletion_month = next((i for i, value in enumerate(timeline) if value <= 0), None)
 
     if monthly_net_burn > 0:
         summary_line = (
             f"- Net burn is {_money(monthly_net_burn)}/mo, so savings last about {runway_months:.1f} months in this scenario."
         )
-        warning_line = f"- At this burn rate, cash may reach zero around month {timeline_stats.get('months_until_zero', runway_months):.0f}."
+        if depletion_month is None:
+            warning_line = "- In this modeled horizon, cash does not reach zero."
+        else:
+            warning_line = f"- At this burn rate, cash may reach zero around month {depletion_month:.0f}."
     elif monthly_net_burn < 0:
         summary_line = f"- Scenario cash flow is positive by {_money(abs(monthly_net_burn))}/mo, so savings are growing."
         warning_line = "- If support drops or expenses rise, the surplus can disappear quickly."
@@ -85,15 +97,15 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
 
     profile_debt_payment = float(getattr(profile, "debt_payment_monthly", 0.0))
     monthly_expenses_cut = profile.expenses_monthly * (1 - scenario.expense_cut_pct / 100.0) + profile_debt_payment
-    monthly_support_base = (
+    support_adjustment_base = (
         scenario.unemployment_benefit_monthly
         + scenario.other_income_monthly
         + scenario.income_change_monthly
     )
     # Keep support non-negative for display/LLM consistency while preserving net burn.
     # Any net-negative support is treated as an additional monthly cost.
-    support_shortfall = max(-monthly_support_base, 0.0)
-    monthly_support = max(monthly_support_base, 0.0)
+    support_shortfall = max(-support_adjustment_base, 0.0)
+    support_adjustment = max(support_adjustment_base, 0.0)
     monthly_addons = (
         scenario.extra_monthly_expenses
         + scenario.debt_payment_monthly
@@ -105,10 +117,19 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     income_start_month = scenario.income_start_month
     income_start_amount = scenario.income_start_amount
 
+    def employment_income_for_month(month: int) -> float:
+        if scenario.months_unemployed > 0 and month <= scenario.months_unemployed:
+            return 0.0
+        return profile.income_monthly
+
     def support_for_month(month: int) -> float:
-        support = monthly_support
+        employment_income = employment_income_for_month(month)
+        support = employment_income + support_adjustment
         if income_start_month > 0 and income_start_amount > 0 and month >= income_start_month:
-            support += income_start_amount
+            if scenario.months_unemployed > 0:
+                support = support - employment_income + income_start_amount
+            else:
+                support += income_start_amount
         return support
 
     def net_burn_for_month(month: int) -> float:
@@ -119,17 +140,22 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
     one_time_total = scenario.one_time_expense + scenario.relocation_cost
     starting_balance = profile.savings + scenario.severance + scenario.one_time_income - one_time_total
 
-    max_months = 60
+    max_months = TIMELINE_HORIZON_MONTHS
     if starting_balance <= 0:
         runway_months = 0.0
     else:
         runway_months = float(max_months)
         balance_probe = starting_balance
         for month in range(1, max_months + 1):
-            balance_probe -= net_burn_for_month(month)
-            if balance_probe <= 0:
-                runway_months = float(month)
+            burn = net_burn_for_month(month)
+            balance_after = balance_probe - burn
+            if balance_after <= 0:
+                if burn > 0:
+                    runway_months = (month - 1) + (balance_probe / burn)
+                else:
+                    runway_months = float(month)
                 break
+            balance_probe = balance_after
 
     debt_ratio = compute_debt_ratio(profile.debt, profile.income_monthly)
     base_risk = compute_risk_score(runway_months, debt_ratio, profile.job_stability, profile.industry)
@@ -145,7 +171,7 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
         adjusted_risk = clamp(risk_score + delta, 0.0, 100.0)
         alert = f"Headline: {event.headline} | Risk adjusted by {delta:+.0f} to {adjusted_risk:.0f}."
 
-    horizon = max(scenario.months_unemployed, 1, scenario.income_start_month, 36)
+    horizon = max(scenario.months_unemployed, 1, scenario.income_start_month, TIMELINE_HORIZON_MONTHS)
     timeline: List[float] = []
     balance = starting_balance
     for month in range(0, horizon + 1):
@@ -225,7 +251,7 @@ def run_analysis(payload: AnalyzeRequest) -> AnalyzeResponse:
         summary = ""
 
     if not summary:
-        summary = _deterministic_summary(payload, metrics, timeline_stats, alert)
+        summary = _deterministic_summary(payload, metrics, timeline_stats, alert, timeline)
 
     return AnalyzeResponse(
         metrics=Metrics(**metrics),

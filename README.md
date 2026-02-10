@@ -19,7 +19,7 @@ RiseArc focuses on **anticipation rather than reaction**; helping users understa
 ### Survival Scenario Simulator
 Simulates job-loss scenarios like a customizable sandbox. For example, users can simulate how long they can sustain their current lifestyle, or simulate what if situations, such as "What if I lose my job next month?" and receive insightful analysis from Nemotron.
 
-### Deterministic Risk Metrics
+### Risk Metrics
 Core financial metrics are computed using deterministic tools:
 - Cash runway (months)
 - Debt-to-income ratio
@@ -65,6 +65,7 @@ A live Nemotron chatbot that assists the user and answers questions using the th
 ## Try It Now
 
 To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
+(There will be a redirect site as Streamlit Ui is being deployed with ngrok)
 
 ---
 
@@ -74,6 +75,8 @@ To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
 - This project was developed with the assistance of AI assistants in Cursor to accelerate development.
 - UI perfection is not the primary goal in v0.1.
 - Nemotron-3-Nano was deployed using NVIDIA NIM.
+- This project is a prototype developed for demonstration purposes. Not licensed for commercial use.
+
 
 ---
 
