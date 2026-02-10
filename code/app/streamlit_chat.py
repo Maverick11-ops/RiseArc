@@ -57,7 +57,7 @@ JOB_STABILITY_OPTIONS = {
 }
 JOB_STABILITY_LABELS = {value: label for label, value in JOB_STABILITY_OPTIONS.items()}
 BASELINE_SUMMARY_VERSION = "v4-currency-locked"
-CHAT_HISTORY_CURRENCY_VERSION = "v7-garbled-sequence-fix"
+CHAT_HISTORY_CURRENCY_VERSION = "v9-markdown-strip-fix"
 TIMELINE_HORIZON_MONTHS = 60
 INVESTMENT_TERMS_PATTERN = re.compile(
     r"\b("
@@ -407,6 +407,7 @@ div[data-testid="stChatMessage"] {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px 16px;
+  padding-bottom: 20px;
   margin-bottom: 12px;
 }
 
@@ -624,6 +625,15 @@ div[data-testid="stChatInput"] [data-baseweb="textarea"] {
 
 .fade-in {
   animation: fadeUp 0.7s ease;
+}
+
+.chat-plain-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Sora', sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text);
 }
 
 @keyframes fadeUp {
@@ -1299,6 +1309,18 @@ def enforce_currency_consistency(text: str) -> str:
         _prefix_number_before_money,
         normalized_text,
     )
+    # Never treat numbered list markers like "1.", "2.", "3." as money.
+    # Handles markers after sentence boundaries and markdown wrappers.
+    normalized_text = re.sub(
+        r"(?m)(^|[\n:.!?]\s+)\$(\d{1,2})\.(?=\s*(?:\*\*|[*_-]|[A-Za-z(]|$))",
+        r"\1\2.",
+        normalized_text,
+    )
+    normalized_text = re.sub(
+        r"(?m)(^|\s)\$(\d{1,2})\.(?=\s*(?:\*\*|[*_-]|[A-Za-z(]|$))",
+        r"\1\2.",
+        normalized_text,
+    )
     normalized_text = re.sub(r"\${2,}", "$", normalized_text)
     return normalized_text
 
@@ -1958,13 +1980,30 @@ def normalize_money_spacing(text: str) -> str:
     return cleaned
 
 
+def strip_markdown_artifacts(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = str(text)
+    cleaned = cleaned.replace("\r\n", "\n")
+    cleaned = re.sub(r"(?m)^\s*\*\s+", "- ", cleaned)
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
+    cleaned = cleaned.replace("`", "")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
 def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
     prepped = html.unescape(str(text or ""))
     prepped = unicodedata.normalize("NFKC", prepped)
     prepped = re.sub(r"[\u200B-\u200D\uFEFF]", "", prepped)
     prepped = prepped.replace("−", "-").replace("—", "-").replace("–", "-")
+    prepped = strip_markdown_artifacts(prepped)
     candidate = enforce_currency_consistency(enforce_non_investment_policy(prepped))
     candidate = normalize_money_spacing(candidate)
+    candidate = strip_markdown_artifacts(candidate)
     if candidate and not has_corrupted_spacing(candidate) and not has_garbled_sequences(candidate):
         return candidate
 
@@ -1972,12 +2011,14 @@ def enforce_readability_guardrail(text: str, fallback: str = "") -> str:
     repaired_seed = repair_spacing_artifacts(repaired_seed)
     repaired = enforce_currency_consistency(enforce_non_investment_policy(repaired_seed))
     repaired = normalize_money_spacing(repaired)
+    repaired = strip_markdown_artifacts(repaired)
     if repaired and not has_corrupted_spacing(repaired) and not has_garbled_sequences(repaired):
         return repaired
 
     if fallback:
         fallback_clean = enforce_currency_consistency(enforce_non_investment_policy(fallback))
         fallback_clean = normalize_money_spacing(fallback_clean)
+        fallback_clean = strip_markdown_artifacts(fallback_clean)
         if fallback_clean and not has_corrupted_spacing(fallback_clean) and not has_garbled_sequences(fallback_clean):
             return fallback_clean
 
@@ -2814,6 +2855,12 @@ def format_readable_text(text: str) -> str:
     if len(sentences) <= 2:
         return text
     return "\n".join(sentences)
+
+
+def render_plain_chat_text(text: str) -> str:
+    safe = html.escape(str(text or ""))
+    safe = safe.replace("\n", "<br>")
+    return f"<div class='chat-plain-text'>{safe}</div>"
 
 
 def get_nemotron_status() -> bool:
@@ -4300,9 +4347,13 @@ def render_scenario_builder() -> None:
         metrics = sanitize_metrics(result.get("metrics", {}))
         timeline = result.get("timeline", [])
         m1, m2, m3 = st.columns(3)
+        monthly_net_burn = float(metrics.get("monthly_net_burn", 0.0))
         runway_value = float(metrics.get("runway_months", 0.0))
-        runway_label = "Not constrained" if runway_value >= float(TIMELINE_HORIZON_MONTHS) else f"{runway_value:.1f}"
-        m1.metric("Runway (months)", runway_label)
+        if monthly_net_burn <= 0:
+            m1.metric("Cash Flow", "Positive")
+        else:
+            runway_label = f"{runway_value:.1f}"
+            m1.metric("Runway (months)", runway_label)
         m2.metric("Risk score", f"{metrics.get('risk_score', 0):.0f}/100")
         m3.metric("Adjusted risk", f"{metrics.get('adjusted_risk_score', 0):.0f}/100")
         st.progress(min(int(metrics.get("risk_score", 0)), 100))
@@ -4543,9 +4594,11 @@ def render_chat() -> None:
                     str(message.get("content", "")),
                     fallback="I can restate that clearly. Ask me again and I will answer cleanly.",
                 )
+                if has_corrupted_spacing(safe_content) or has_garbled_sequences(safe_content):
+                    safe_content = "I can restate that clearly. Ask me again and I will answer cleanly."
                 if safe_content != message.get("content", ""):
                     st.session_state.chat_history[idx]["content"] = safe_content
-                st.markdown(safe_content)
+                st.markdown(render_plain_chat_text(safe_content), unsafe_allow_html=True)
             else:
                 st.text(message["content"])
 
@@ -4635,14 +4688,18 @@ def render_chat() -> None:
                 response,
                 fallback="I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?",
             )
+            if has_corrupted_spacing(response) or has_garbled_sequences(response):
+                response = "I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?"
             display_response = format_readable_text(response)
-            typing_placeholder.markdown(display_response)
+            typing_placeholder.markdown(render_plain_chat_text(display_response), unsafe_allow_html=True)
 
         st.session_state.chat_history.append({"role": "user", "content": pending_prompt})
         formatted_response = enforce_readability_guardrail(
             format_readable_text(response),
             fallback="I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?",
         )
+        if has_corrupted_spacing(formatted_response) or has_garbled_sequences(formatted_response):
+            formatted_response = "I can restate that clearly. Do you want me to focus on cash flow, runway, or risk?"
         st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
         st.session_state.pending_prompt = ""
 
