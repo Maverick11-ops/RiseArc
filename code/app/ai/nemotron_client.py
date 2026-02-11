@@ -11,8 +11,9 @@ except Exception:  # pragma: no cover - handled at runtime
 
 NIM_BASE_URL = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NEMOTRON_MODEL = os.getenv("NEMOTRON_MODEL", "nvidia/nemotron-3-nano-30b-a3b")
-NEMOTRON_TIMEOUT = float(os.getenv("NEMOTRON_TIMEOUT", "90"))
-NEMOTRON_HEALTH_TIMEOUT = float(os.getenv("NEMOTRON_HEALTH_TIMEOUT", "2.0"))
+NEMOTRON_TIMEOUT = float(os.getenv("NEMOTRON_TIMEOUT", "25"))
+NEMOTRON_HEALTH_TIMEOUT = float(os.getenv("NEMOTRON_HEALTH_TIMEOUT", "1.0"))
+NEMOTRON_MAX_RETRIES = max(0, int(os.getenv("NEMOTRON_MAX_RETRIES", "0")))
 NEMOTRON_API_KEY = os.getenv("NVIDIA_API_KEY") or os.getenv("NEMOTRON_API_KEY") or os.getenv("OPENAI_API_KEY")
 NEMOTRON_DEFAULT_MAX_TOKENS = int(os.getenv("NEMOTRON_DEFAULT_MAX_TOKENS", "800"))
 
@@ -31,17 +32,23 @@ def _base_url() -> str:
 def _get_client() -> OpenAI | None:
     if OpenAI is None:
         return None
-    return OpenAI(base_url=_base_url(), api_key=NEMOTRON_API_KEY)
+    return OpenAI(base_url=_base_url(), api_key=NEMOTRON_API_KEY, max_retries=NEMOTRON_MAX_RETRIES)
 
 
 def check_nemotron_online(timeout: float | None = None) -> bool:
     base = _base_url().rstrip("/")
     health_timeout = timeout if timeout is not None else NEMOTRON_HEALTH_TIMEOUT
     headers = {"Authorization": f"Bearer {NEMOTRON_API_KEY}"} if NEMOTRON_API_KEY else {}
-    for path in ("/health", "/v1/models", "/models"):
+    # Check likely model listing endpoints first to keep status checks fast.
+    paths = []
+    for path in ("/models", "/v1/models", "/health"):
+        if path not in paths:
+            paths.append(path)
+    for path in paths:
         try:
             resp = requests.get(f"{base}{path}", timeout=health_timeout, headers=headers)
-            if resp.ok:
+            # Any non-5xx HTTP response means the endpoint is reachable.
+            if resp.ok or resp.status_code < 500:
                 return True
         except Exception:
             continue

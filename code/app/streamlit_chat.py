@@ -2698,6 +2698,8 @@ def nemotron_generate_conversational(
 ) -> str:
     if not query_nemotron or not extract_text:
         return "Nemotron is unavailable right now. Please start the server and try again."
+    if not get_nemotron_status():
+        return format_nemotron_error("connection", "chat response")
 
     metrics = sanitize_metrics(metrics)
     if scenario_metrics:
@@ -2843,6 +2845,12 @@ def nemotron_generate_structured(
             include_followup=include_followup,
             force_simple_terms=simple_terms_requested,
         )
+
+    if not get_nemotron_status():
+        fallback = deterministic_fallback()
+        if fallback:
+            return finalize_output(fallback, fallback=fallback)
+        return finalize_output(format_nemotron_error("connection", mode))
 
     context = build_nemotron_context(
         profile=profile,
@@ -3161,6 +3169,8 @@ def extract_scenario_from_text(user_text: str, use_model: bool = False) -> Dict[
     if not user_text or not user_text.strip():
         return {}
     if not use_model or not query_nemotron or not extract_text:
+        return regex_extract_scenario(user_text)
+    if not get_nemotron_status():
         return regex_extract_scenario(user_text)
 
     schema = {
@@ -4664,6 +4674,7 @@ def render_chat() -> None:
         is_small = is_small_talk(pending_prompt)
         use_structured = should_use_structured_chat_response(pending_prompt, st.session_state.chat_history)
         use_job_loss = is_job_loss_intent(pending_prompt)
+        nemotron_online = get_nemotron_status()
         scenario_payload = None
         scenario_metrics = None
         if use_job_loss:
@@ -4683,7 +4694,9 @@ def render_chat() -> None:
                 unsafe_allow_html=True,
             )
             try:
-                if is_small:
+                if not nemotron_online:
+                    response = format_nemotron_error("connection", "chat response")
+                elif is_small:
                     smalltalk_prompt = (
                         "You are RiseArc, a friendly financial assistant. Respond briefly and naturally "
                         "to the user's message in 1-2 sentences. Do not use headings or bullets. "
