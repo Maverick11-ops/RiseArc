@@ -76,6 +76,7 @@ To use RiseArc, simply paste this URL in any web browser: **bit.ly/RiseArc**
 - UI perfection is not the primary goal in v0.1.
 - Nemotron-3-Nano was deployed using NVIDIA NIM.
 - This project is a prototype developed for demonstration purposes. Not licensed for commercial use.
+- Usage of the application on a mobile device is not recommended.
 
 
 ---
